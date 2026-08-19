@@ -322,3 +322,241 @@ def test_lora_adapter_only_optimizer_step_leaves_base_identical(active_backend):
     # 3. Parameter identities preserved
     assert id(layer.base.weight) == orig_base_weight_id
     assert id(layer.base.bias) == orig_base_bias_id
+
+
+# =============================================================================
+# 6. SCRUM-309: Adapter-only State Serialization & Atomic Restoration
+# =============================================================================
+
+def test_lora_adapter_state_dict_schema_and_exclusion(active_backend):
+    layer = nn.LoRALinear(in_features=6, out_features=4, rank=2, alpha=4.0, bias=True)
+    state = layer.adapter_state_dict()
+
+    # Exact expected keys
+    assert set(state.keys()) == {"format", "version", "in_features", "out_features", "rank", "alpha", "lora_A", "lora_B"}
+    assert state["format"] == "termux-train-lora-adapter"
+    assert state["version"] == "1.0"
+    assert state["in_features"] == 6
+    assert state["out_features"] == 4
+    assert state["rank"] == 2
+    assert state["alpha"] == 4.0
+
+    # Base parameters & optimizer state are strictly excluded
+    assert "base.weight" not in state
+    assert "base.bias" not in state
+    assert "weight" not in state
+    assert "bias" not in state
+
+
+def test_lora_adapter_state_dict_deep_copy_isolation(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    state = layer.adapter_state_dict()
+
+    # 1. Modifying state dict does not affect layer
+    state["lora_A"][0][0] = 9999.0
+    assert layer.lora_A.tolist()[0][0] != 9999.0
+
+    # 2. Modifying layer does not affect previously exported state dict
+    layer.lora_B._data = layer.lora_B.backend.from_data([[888.0, 888.0], [888.0, 888.0]])
+    assert state["lora_B"][0][0] == 0.0
+
+
+def test_lora_single_layer_load_adapter_state_dict_round_trip(active_backend):
+    layer1 = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    layer1.lora_A._data = layer1.lora_A.backend.from_data([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]])
+    layer1.lora_B._data = layer1.lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    state = layer1.adapter_state_dict()
+
+    layer2 = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_l2_weight_id = id(layer2.base.weight)
+    orig_l2_A_id = id(layer2.lora_A)
+    orig_l2_B_id = id(layer2.lora_B)
+
+    layer2.load_adapter_state_dict(state)
+
+    # Values matched
+    assert layer2.lora_A.flatten().tolist() == pytest.approx(layer1.lora_A.flatten().tolist(), abs=1e-6)
+    assert layer2.lora_B.flatten().tolist() == pytest.approx(layer1.lora_B.flatten().tolist(), abs=1e-6)
+
+    # Identities preserved
+    assert id(layer2.base.weight) == orig_l2_weight_id
+    assert id(layer2.lora_A) == orig_l2_A_id
+    assert id(layer2.lora_B) == orig_l2_B_id
+
+    # requires_grad preserved
+    assert layer2.base.weight.requires_grad is False
+    assert layer2.lora_A.requires_grad is True
+    assert layer2.lora_B.requires_grad is True
+
+
+def test_lora_cross_backend_portability():
+    # 1. Export state on PythonBackend
+    set_backend("python")
+    py_layer = nn.LoRALinear(in_features=3, out_features=2, rank=2, alpha=2.0)
+    py_layer.lora_A._data = py_layer.lora_A.backend.from_data([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    py_layer.lora_B._data = py_layer.lora_B.backend.from_data([[0.1, 0.2], [0.3, 0.4]])
+    py_state = py_layer.adapter_state_dict()
+
+    if "numpy" in available_backends():
+        # 2. Load into NumPyBackend layer
+        set_backend("numpy")
+        np_layer = nn.LoRALinear(in_features=3, out_features=2, rank=2, alpha=2.0)
+        assert np_layer.lora_A.backend.name == "numpy"
+
+        np_layer.load_adapter_state_dict(py_state)
+
+        # Target backend preserved
+        assert np_layer.lora_A.backend.name == "numpy"
+        assert np_layer.lora_B.backend.name == "numpy"
+
+        # Values matched
+        assert np_layer.lora_A.flatten().tolist() == pytest.approx(py_layer.lora_A.flatten().tolist(), abs=1e-6)
+        assert np_layer.lora_B.flatten().tolist() == pytest.approx(py_layer.lora_B.flatten().tolist(), abs=1e-6)
+
+        # 3. Export on NumPy and load into Python
+        np_state = np_layer.adapter_state_dict()
+        set_backend("python")
+        fresh_py_layer = nn.LoRALinear(in_features=3, out_features=2, rank=2, alpha=2.0)
+        fresh_py_layer.load_adapter_state_dict(np_state)
+        assert fresh_py_layer.lora_A.backend.name == "python"
+        assert fresh_py_layer.lora_A.flatten().tolist() == pytest.approx(np_layer.lora_A.flatten().tolist(), abs=1e-6)
+
+
+def test_lora_load_atomic_rejections_and_rollback(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_a = copy.deepcopy(layer.lora_A.tolist())
+    orig_b = copy.deepcopy(layer.lora_B.tolist())
+    valid_state = layer.adapter_state_dict()
+
+    # 1. Non-dict rejection
+    with pytest.raises(TypeError, match="state_dict must be a dict"):
+        layer.load_adapter_state_dict("invalid")
+    assert layer.lora_A.tolist() == orig_a
+
+    # 2. Missing key rejection in strict mode
+    bad_state = copy.deepcopy(valid_state)
+    del bad_state["lora_B"]
+    with pytest.raises(ValueError, match="Missing required keys"):
+        layer.load_adapter_state_dict(bad_state, strict=True)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 3. Unexpected key rejection in strict mode
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["extra_field"] = 123
+    with pytest.raises(ValueError, match="Unexpected keys"):
+        layer.load_adapter_state_dict(bad_state, strict=True)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 4. Format mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["format"] = "unknown-format"
+    with pytest.raises(ValueError, match="Unsupported adapter format"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 5. Version mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["version"] = "2.0"
+    with pytest.raises(ValueError, match="Unsupported adapter version"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 6. in_features mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["in_features"] = 99
+    with pytest.raises(ValueError, match="in_features mismatch"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 7. rank mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["rank"] = 99
+    with pytest.raises(ValueError, match="rank mismatch"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 8. alpha mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["alpha"] = 99.0
+    with pytest.raises(ValueError, match="alpha mismatch"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 9. Ragged matrix rejection
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["lora_A"] = [[1.0, 2.0], [1.0], [1.0, 2.0], [1.0, 2.0]]  # Row 1 has 1 item instead of 2
+    with pytest.raises(ValueError, match="column count mismatch"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 10. Non-numeric / boolean rejection
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["lora_A"][0][0] = True
+    with pytest.raises(TypeError, match="must be a float or int"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 11. NaN / Inf rejection
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["lora_B"][0][0] = float("nan")
+    with pytest.raises(ValueError, match="must be finite"):
+        layer.load_adapter_state_dict(bad_state)
+    assert layer.lora_B.tolist() == orig_b
+
+
+def test_lora_model_level_adapter_state_dict_and_atomic_loading(active_backend):
+    from termux_train.nn.lora import adapter_state_dict, load_adapter_state_dict
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.Tanh(),
+        nn.Linear(6, 6),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+
+    # Perturb adapter factors
+    model[0].lora_A._data = model[0].lora_A.backend.from_data([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]])
+    model[3].lora_B._data = model[3].lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    state = adapter_state_dict(model)
+    assert state["format"] == "termux-train-lora-model-adapter"
+    assert "0" in state["adapters"]
+    assert "3" in state["adapters"]
+
+    # Load into fresh model
+    fresh_model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.Tanh(),
+        nn.Linear(6, 6),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+    load_adapter_state_dict(fresh_model, state)
+
+    assert fresh_model[0].lora_A.flatten().tolist() == pytest.approx(model[0].lora_A.flatten().tolist(), abs=1e-6)
+    assert fresh_model[3].lora_B.flatten().tolist() == pytest.approx(model[3].lora_B.flatten().tolist(), abs=1e-6)
+
+
+def test_lora_model_level_atomic_rollback_on_partial_failure(active_backend):
+    from termux_train.nn.lora import adapter_state_dict, load_adapter_state_dict
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.Tanh(),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+
+    orig_l0_a = copy.deepcopy(model[0].lora_A.tolist())
+    orig_l2_b = copy.deepcopy(model[2].lora_B.tolist())
+
+    state = adapter_state_dict(model)
+    # Valid change for layer 0, corrupted for layer 2
+    state["adapters"]["0"]["lora_A"][0][0] = 777.0
+    state["adapters"]["2"]["lora_B"][0][0] = float("nan")  # Corrupted!
+
+    with pytest.raises(ValueError, match="must be finite"):
+        load_adapter_state_dict(model, state)
+
+    # 100% Rollback: Layer 0 must NOT be modified even though its data was valid!
+    assert model[0].lora_A.tolist() == orig_l0_a
+    assert model[2].lora_B.tolist() == orig_l2_b

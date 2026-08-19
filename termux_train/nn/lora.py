@@ -4,16 +4,36 @@ termux_train.nn.lora
 Low-Rank Adaptation (LoRA) Layer for Parameter-Efficient On-Device Fine-Tuning.
 Freezes pre-trained base Linear weights and learns decomposed low-rank matrices
 lora_A (in_features, rank) and lora_B (rank, out_features) with scaling factor alpha / rank.
+Supports atomic, cross-backend adapter-only state serialization and restoration.
 """
 
+import copy
 import math
 import random
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any, Union
 from .module import Module
 from .parameter import Parameter
 from .linear import Linear
 from ..tensor import Tensor
 from ..backend import get_backend, BaseBackend
+
+
+def _validate_2d_matrix_data(data: Any, expected_shape: Tuple[int, int], name: str) -> None:
+    """Validates that data is a regular 2D list of finite numeric values matching expected_shape."""
+    if not isinstance(data, list):
+        raise TypeError(f"'{name}' must be a 2D list, got {type(data).__name__}")
+    if len(data) != expected_shape[0]:
+        raise ValueError(f"'{name}' row count mismatch: expected {expected_shape[0]}, got {len(data)}")
+    for r_idx, row in enumerate(data):
+        if not isinstance(row, list):
+            raise TypeError(f"'{name}' row {r_idx} must be a list, got {type(row).__name__}")
+        if len(row) != expected_shape[1]:
+            raise ValueError(f"'{name}' row {r_idx} column count mismatch: expected {expected_shape[1]}, got {len(row)}")
+        for c_idx, val in enumerate(row):
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                raise TypeError(f"'{name}'[{r_idx}][{c_idx}] must be a float or int, got {val!r}")
+            if not math.isfinite(val):
+                raise ValueError(f"'{name}'[{r_idx}][{c_idx}] must be finite, got {val}")
 
 
 class LoRALinear(Module):
@@ -76,7 +96,7 @@ class LoRALinear(Module):
         if self.base.bias is not None:
             self.base.bias.requires_grad = False
 
-        # 2. LoRA Factor A: (in_features, rank) initialized with small random values
+        # 2. LoRA Factor A: (in_features, rank) initialized with small random values from Uniform(-1/sqrt(in), 1/sqrt(in))
         bound = 1.0 / math.sqrt(in_features) if in_features > 0 else 1.0
         lora_A_data = [
             [random.uniform(-bound, bound) for _ in range(rank)]
@@ -181,6 +201,96 @@ class LoRALinear(Module):
         """Returns the named adapter parameters [('lora_A', lora_A), ('lora_B', lora_B)]."""
         return [("lora_A", self.lora_A), ("lora_B", self.lora_B)]
 
+    def adapter_state_dict(self) -> Dict[str, Any]:
+        """
+        Exports adapter-only parameters (lora_A and lora_B) as a detached, deep-copied dictionary.
+        Base weights, biases, optimizer states, and merge snapshots are strictly excluded.
+        """
+        return {
+            "format": "termux-train-lora-adapter",
+            "version": "1.0",
+            "in_features": self.in_features,
+            "out_features": self.out_features,
+            "rank": self.rank,
+            "alpha": self.alpha,
+            "lora_A": copy.deepcopy(self.lora_A.tolist()),
+            "lora_B": copy.deepcopy(self.lora_B.tolist()),
+        }
+
+    def load_adapter_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
+        """
+        Atomically loads adapter parameters from state_dict into this LoRALinear layer.
+
+        Two-phase atomic commit:
+          1. Pre-validates all metadata (format, version, shapes, finite scalars).
+          2. Builds pending native backend buffers.
+          3. Commits only after 100% validation success.
+          If any validation error occurs, current parameters remain 100% untouched.
+        """
+        if self._merged:
+            raise RuntimeError("Cannot load adapter state into a merged LoRALinear layer. Unmerge before loading.")
+
+        if not isinstance(state_dict, dict):
+            raise TypeError(f"state_dict must be a dict, got {type(state_dict).__name__}")
+
+        expected_keys = {"format", "version", "in_features", "out_features", "rank", "alpha", "lora_A", "lora_B"}
+        actual_keys = set(state_dict.keys())
+
+        if strict:
+            missing_keys = expected_keys - actual_keys
+            if missing_keys:
+                raise ValueError(f"Missing required keys in adapter_state_dict: {sorted(missing_keys)}")
+            unexpected_keys = actual_keys - expected_keys
+            if unexpected_keys:
+                raise ValueError(f"Unexpected keys in adapter_state_dict: {sorted(unexpected_keys)}")
+        else:
+            if "format" in state_dict and state_dict["format"] != "termux-train-lora-adapter":
+                raise ValueError(f"Unsupported adapter format: {state_dict['format']}")
+            if "version" in state_dict and state_dict["version"] != "1.0":
+                raise ValueError(f"Unsupported adapter version: {state_dict['version']}")
+
+        if "format" in state_dict:
+            if state_dict["format"] != "termux-train-lora-adapter":
+                raise ValueError(f"Unsupported adapter format: {state_dict['format']}")
+        if "version" in state_dict:
+            if state_dict["version"] != "1.0":
+                raise ValueError(f"Unsupported adapter version: {state_dict['version']}")
+
+        if "in_features" in state_dict:
+            if state_dict["in_features"] != self.in_features:
+                raise ValueError(f"in_features mismatch: expected {self.in_features}, got {state_dict['in_features']}")
+        if "out_features" in state_dict:
+            if state_dict["out_features"] != self.out_features:
+                raise ValueError(f"out_features mismatch: expected {self.out_features}, got {state_dict['out_features']}")
+        if "rank" in state_dict:
+            if state_dict["rank"] != self.rank:
+                raise ValueError(f"rank mismatch: expected {self.rank}, got {state_dict['rank']}")
+        if "alpha" in state_dict:
+            if state_dict["alpha"] != self.alpha:
+                raise ValueError(f"alpha mismatch: expected {self.alpha}, got {state_dict['alpha']}")
+
+        # Pre-validate and stage pending buffers
+        pending_A_data = None
+        pending_B_data = None
+
+        if "lora_A" in state_dict:
+            _validate_2d_matrix_data(state_dict["lora_A"], (self.in_features, self.rank), "lora_A")
+            pending_A_data = self.lora_A.backend.from_data(state_dict["lora_A"])
+        elif strict:
+            raise ValueError("Missing 'lora_A' in adapter_state_dict")
+
+        if "lora_B" in state_dict:
+            _validate_2d_matrix_data(state_dict["lora_B"], (self.rank, self.out_features), "lora_B")
+            pending_B_data = self.lora_B.backend.from_data(state_dict["lora_B"])
+        elif strict:
+            raise ValueError("Missing 'lora_B' in adapter_state_dict")
+
+        # Atomic commit
+        if pending_A_data is not None:
+            self.lora_A._data = pending_A_data
+        if pending_B_data is not None:
+            self.lora_B._data = pending_B_data
+
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward computation:
@@ -263,3 +373,185 @@ def named_adapter_parameters(module: Module, prefix: str = "") -> List[Tuple[str
 
     _traverse(module, prefix)
     return named_params
+
+
+def adapter_state_dict(module: Module) -> Dict[str, Any]:
+    """
+    Recursively exports adapter states from all LoRALinear layers within the given module hierarchy.
+    Returns a container mapping deterministic hierarchical prefixes to individual layer adapter state dictionaries.
+    """
+    if isinstance(module, LoRALinear):
+        return module.adapter_state_dict()
+
+    adapters: Dict[str, Any] = {}
+    visited_modules = set()
+
+    def _traverse(m: Module, curr_prefix: str):
+        if id(m) in visited_modules:
+            return
+        visited_modules.add(id(m))
+
+        if isinstance(m, LoRALinear):
+            key = curr_prefix if curr_prefix else "layer"
+            adapters[key] = m.adapter_state_dict()
+            return
+
+        for sub_name, sub_m in m._modules.items():
+            if sub_m is not None:
+                sub_prefix = f"{curr_prefix}.{sub_name}" if curr_prefix else sub_name
+                _traverse(sub_m, sub_prefix)
+
+    _traverse(module, "")
+
+    return {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": adapters,
+    }
+
+
+def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: bool = True) -> None:
+    """
+    Recursively loads adapter states into all LoRALinear layers within the given module hierarchy.
+    Enforces two-phase atomic validation across all layers in the model before committing.
+    """
+    if not isinstance(state_dict, dict):
+        raise TypeError(f"state_dict must be a dict, got {type(state_dict).__name__}")
+
+    # Case 1: Single LoRALinear layer
+    if isinstance(module, LoRALinear):
+        if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
+            adapters = state_dict["adapters"]
+            if len(adapters) == 1:
+                single_key = next(iter(adapters))
+                module.load_adapter_state_dict(adapters[single_key], strict=strict)
+                return
+            raise ValueError(f"Model adapter container has {len(adapters)} layers, expected 1 for single LoRALinear")
+        module.load_adapter_state_dict(state_dict, strict=strict)
+        return
+
+    # Case 2: Container module (e.g. Sequential or custom Module)
+    layers: Dict[str, LoRALinear] = {}
+    visited_modules = set()
+
+    def _collect(m: Module, curr_prefix: str):
+        if id(m) in visited_modules:
+            return
+        visited_modules.add(id(m))
+
+        if isinstance(m, LoRALinear):
+            key = curr_prefix if curr_prefix else "layer"
+            layers[key] = m
+            return
+
+        for sub_name, sub_m in m._modules.items():
+            if sub_m is not None:
+                sub_prefix = f"{curr_prefix}.{sub_name}" if curr_prefix else sub_name
+                _collect(sub_m, sub_prefix)
+
+    _collect(module, "")
+
+    # Extract adapter dictionary
+    adapters_data: Dict[str, Any] = {}
+    if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
+        if state_dict.get("version") != "1.0":
+            raise ValueError(f"Unsupported model adapter version: {state_dict.get('version')}")
+        adapters_data = state_dict["adapters"]
+    elif all(k in layers for k in state_dict.keys()):
+        adapters_data = state_dict
+    else:
+        # Check flat parameter dictionary: e.g. "0.lora_A", "0.lora_B"
+        flat_matching = False
+        reconstructed: Dict[str, Dict[str, Any]] = {}
+        for l_key, l_obj in layers.items():
+            key_a = f"{l_key}.lora_A"
+            key_b = f"{l_key}.lora_B"
+            if key_a in state_dict or key_b in state_dict:
+                flat_matching = True
+                layer_d = {
+                    "format": "termux-train-lora-adapter",
+                    "version": "1.0",
+                    "in_features": l_obj.in_features,
+                    "out_features": l_obj.out_features,
+                    "rank": l_obj.rank,
+                    "alpha": l_obj.alpha,
+                }
+                if key_a in state_dict:
+                    layer_d["lora_A"] = state_dict[key_a]
+                if key_b in state_dict:
+                    layer_d["lora_B"] = state_dict[key_b]
+                reconstructed[l_key] = layer_d
+        if flat_matching:
+            adapters_data = reconstructed
+        else:
+            adapters_data = state_dict.get("adapters", state_dict)
+
+    if strict:
+        expected_keys = set(layers.keys())
+        actual_keys = set(adapters_data.keys())
+        missing_keys = expected_keys - actual_keys
+        if missing_keys:
+            raise ValueError(f"Missing adapter keys in model state_dict: {sorted(missing_keys)}")
+        unexpected_keys = actual_keys - expected_keys
+        if unexpected_keys:
+            raise ValueError(f"Unexpected adapter keys in model state_dict: {sorted(unexpected_keys)}")
+
+    # Phase 1: validate and stage pending buffers for all layers
+    staged: Dict[str, Tuple[Optional[Any], Optional[Any]]] = {}
+    for l_key, l_obj in layers.items():
+        if l_key not in adapters_data:
+            if strict:
+                raise ValueError(f"Missing layer '{l_key}' in state_dict")
+            continue
+        l_state = adapters_data[l_key]
+        if not isinstance(l_state, dict):
+            raise TypeError(f"State for layer '{l_key}' must be a dict, got {type(l_state).__name__}")
+
+        if l_obj.merged:
+            raise RuntimeError(f"Cannot load adapter state into merged layer '{l_key}'")
+
+        if strict:
+            exp_l_keys = {"format", "version", "in_features", "out_features", "rank", "alpha", "lora_A", "lora_B"}
+            act_l_keys = set(l_state.keys())
+            if exp_l_keys - act_l_keys:
+                raise ValueError(f"Missing keys in layer '{l_key}': {sorted(exp_l_keys - act_l_keys)}")
+            if act_l_keys - exp_l_keys:
+                raise ValueError(f"Unexpected keys in layer '{l_key}': {sorted(act_l_keys - exp_l_keys)}")
+
+        if "format" in l_state and l_state["format"] != "termux-train-lora-adapter":
+            raise ValueError(f"Unsupported adapter format in layer '{l_key}': {l_state['format']}")
+        if "version" in l_state and l_state["version"] != "1.0":
+            raise ValueError(f"Unsupported adapter version in layer '{l_key}': {l_state['version']}")
+
+        if "in_features" in l_state and l_state["in_features"] != l_obj.in_features:
+            raise ValueError(f"in_features mismatch in layer '{l_key}': expected {l_obj.in_features}, got {l_state['in_features']}")
+        if "out_features" in l_state and l_state["out_features"] != l_obj.out_features:
+            raise ValueError(f"out_features mismatch in layer '{l_key}': expected {l_obj.out_features}, got {l_state['out_features']}")
+        if "rank" in l_state and l_state["rank"] != l_obj.rank:
+            raise ValueError(f"rank mismatch in layer '{l_key}': expected {l_obj.rank}, got {l_state['rank']}")
+        if "alpha" in l_state and l_state["alpha"] != l_obj.alpha:
+            raise ValueError(f"alpha mismatch in layer '{l_key}': expected {l_obj.alpha}, got {l_state['alpha']}")
+
+        pending_A = None
+        pending_B = None
+        if "lora_A" in l_state:
+            _validate_2d_matrix_data(l_state["lora_A"], (l_obj.in_features, l_obj.rank), f"{l_key}.lora_A")
+            pending_A = l_obj.lora_A.backend.from_data(l_state["lora_A"])
+        elif strict:
+            raise ValueError(f"Missing 'lora_A' in layer '{l_key}'")
+
+        if "lora_B" in l_state:
+            _validate_2d_matrix_data(l_state["lora_B"], (l_obj.rank, l_obj.out_features), f"{l_key}.lora_B")
+            pending_B = l_obj.lora_B.backend.from_data(l_state["lora_B"])
+        elif strict:
+            raise ValueError(f"Missing 'lora_B' in layer '{l_key}'")
+
+        staged[l_key] = (pending_A, pending_B)
+
+    # Phase 2: Commit all staged buffers atomically
+    for l_key, (pending_A, pending_B) in staged.items():
+        l_obj = layers[l_key]
+        if pending_A is not None:
+            l_obj.lora_A._data = pending_A
+        if pending_B is not None:
+            l_obj.lora_B._data = pending_B

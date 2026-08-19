@@ -10,7 +10,13 @@ from .linear import Linear
 from .sequential import Sequential
 from .activations import ReLU, Sigmoid, Tanh
 from .loss import mse_loss, MSELoss, bce_loss, BCELoss
-from .lora import LoRALinear, adapter_parameters, named_adapter_parameters
+from .lora import (
+    LoRALinear,
+    adapter_parameters,
+    named_adapter_parameters,
+    adapter_state_dict,
+    load_adapter_state_dict,
+)
 
 __all__ = [
     "Module",
@@ -27,4 +33,6 @@ __all__ = [
     "LoRALinear",
     "adapter_parameters",
     "named_adapter_parameters",
+    "adapter_state_dict",
+    "load_adapter_state_dict",
 ]
