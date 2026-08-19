@@ -159,23 +159,34 @@ for epoch in range(1000):
 
 ---
 
-## 📱 Mobile-Resilient Training with MobileTrainer *(Planned: Sprint 5)*
+## 📱 Mobile Training Runtime & Safe Checkpointing (`MobileTrainer`)
+
+`termux_train.runtime` provides crash-resilient atomic checkpointing and training loop management designed specifically for on-device and resource-constrained environments:
 
 ```python
-# [Planned Sprint 5 Preview]
-from termux_train.runtime import MobileTrainer
+from termux_train import Tensor, nn, optim, runtime
 
-trainer = MobileTrainer(
+# 1. Setup Model, Optimizer, and Loss
+model = nn.Sequential(nn.Linear(2, 8), nn.Tanh(), nn.Linear(8, 1), nn.Sigmoid())
+optimizer = optim.Adam(model.parameters(), lr=0.05)
+criterion = nn.MSELoss()
+
+# 2. Configure MobileTrainer with Atomic Checkpointing
+trainer = runtime.MobileTrainer(
     model=model,
     optimizer=optimizer,
+    criterion=criterion,
     checkpoint_dir="./checkpoints",
-    checkpoint_every=100,
-    pause_if_battery_below=20,      # Auto-pause when battery is low (<20%)
-    pause_if_temperature_above=43,  # Auto-throttle when phone heats up (>43°C)
-    max_ram_mb=2048
+    checkpoint_every_epochs=10,
 )
 
-trainer.fit(dataset, epochs=10)
+# 3. Train with Automatic Checkpoint Saving
+x = Tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])
+target = Tensor([[0.0], [1.0], [1.0], [0.0]])
+trainer.fit(dataset=(x, target), epochs=50)
+
+# 4. Resume from Checkpoint after Interruption
+trainer.fit(dataset=(x, target), epochs=50, resume_from="./checkpoints/checkpoint_latest.json")
 ```
 
 ---
@@ -185,16 +196,16 @@ trainer.fit(dataset, epochs=10)
 ```
 termux-train/
 ├── termux_train/
-│   ├── __init__.py           # Tensor, nn, optim, utils exports
+│   ├── __init__.py           # Tensor, nn, optim, runtime, utils exports
 │   ├── tensor.py             # Pure-Python Tensor Data Model & DAG Graph
 │   ├── backend/              # Pluggable Compute Backends (Base, Python, NumPy)
 │   ├── nn/                   # Module, Parameter, Linear, Sequential, Activations, Losses
 │   ├── optim/                # First-Order Optimizers: SGD (Momentum, Nesterov), Adam, AdamW
-│   ├── runtime/              # [Sprint 5 Planned] MobileTrainer, Safe Checkpoint, Battery/Thermal Guard
+│   ├── runtime/              # MobileTrainer, Safe Atomic Checkpoint Save/Load & Recovery Engine
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
-├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training Demos
-└── tests/                    # 216 Unit, Backend, Autograd, NN, Optim, Training, Gradcheck Test Suites
+├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime Demos
+└── tests/                    # 232 Unit, Backend, Autograd, NN, Optim, Runtime, Training Test Suites
 ```
 
 ---
@@ -211,7 +222,7 @@ termux-train/
 - [x] **Sprint 3.8**: Initial 1D~3D Matmul Core Suite & Autograd Hardening (`SCRUM-343` ~ `SCRUM-350`)
 - [x] **Sprint 3.9**: Complete 1D~3D Matmul Rank Matrix, 9 Forward/Backward Combinations & Linear 1D~3D Support (`SCRUM-351`)
 - [x] **Sprint 4**: Optimizers (`SGD`, `Adam`, `AdamW`) & XOR Convergence MVP (`SCRUM-296` ~ `SCRUM-300`)
-- [ ] **Sprint 5**: Mobile Training Runtime & Thermal/Battery Guard (`SCRUM-301` ~ `SCRUM-307`)
+- [x] **Sprint 5**: Mobile Training Runtime & Safe Checkpointing (`SCRUM-301` ~ `SCRUM-307`)
 - [ ] **Sprint 6**: On-Device LoRA Adapter (`SCRUM-308` ~ `SCRUM-312`)
 - [ ] **Sprint 7**: Tiny Transformer & CharLM Toy Trainer (General 4D ND Matmul & Multi-Head Attention) (`SCRUM-313` ~ `SCRUM-319`)
 - [ ] **Sprint 8**: Packaging, Full Test Suite & v0.1.0-alpha Release (`SCRUM-320` ~ `SCRUM-325`)

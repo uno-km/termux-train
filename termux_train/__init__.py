@@ -11,6 +11,7 @@ from .backend import get_backend, set_backend, available_backends
 from .tensor import Tensor, tensor, zeros, ones, zeros_like, ones_like, randn
 from . import nn
 from . import optim
+from . import runtime
 from .utils.termux_env import is_termux, is_android, get_device_info, get_battery_info, get_thermal_info
 
 __all__ = [
@@ -23,9 +24,10 @@ __all__ = [
     "ones_like",
     "randn",
     
-    # NN & Optim Submodules
+    # NN, Optim & Runtime Submodules
     "nn",
     "optim",
+    "runtime",
     
     # Backend
     "get_backend",
