@@ -38,15 +38,12 @@ def main():
 
 | Metric | Detected Value | Status / Notes |
 | :--- | :--- | :--- |
-| **Operating System** | `{info['platform']}` | {'✅ Android Native' if info['is_android'] else '💻 Desktop / Emulated'} |
-| **Termux Environment** | `{info['is_termux']}` | {'✅ Termux Native Bionic' if info['is_termux'] else '⚠️ Standard Host / Non-Termux'} |
+| **Operating System** | `{info['platform']}` | {'✅ Android Native' if info['is_android'] else '💻 Desktop / Host'} |
+| **Termux Environment** | `{info['is_termux']}` | {'✅ Termux Native Bionic' if info['is_termux'] else 'ℹ️ Standard Host / Non-Termux'} |
 | **Python Version** | `{info['python_version']}` | ✅ Python 3.x Ready |
 | **CPU Architecture** | `{info['cpu']['architecture']}` | {'✅ ARM64 / aarch64 (Android Native)' if info['cpu']['is_arm64'] else 'ℹ️ Host Architecture'} |
-| **Logical CPU Cores** | `{info['cpu']['cores_logical']}` | Octa-Core Multithreading Available |
-| **Total System RAM** | `{info['memory'].get('total_mb', 'N/A')} MB` | {'Available: ' + str(info['memory'].get('available_mb', 'N/A')) + ' MB'} |
-| **Disk Space** | `{info['storage'].get('free_gb', 'N/A')} GB Free / {info['storage'].get('total_gb', 'N/A')} GB Total` | Storage Guard Operational |
-| **Battery Level** | `{info['battery'].get('percentage', 'N/A')}%` | Status: `{info['battery'].get('status', 'N/A')}` |
-| **Max Temperature** | `{info['thermal'].get('max_temp_c', 'N/A')} °C` | Thermal Guard Limit: 43.0°C |
+| **Logical CPU Cores** | `{info['cpu']['cores_logical']}` | Multithreading Available |
+| **Disk Space** | `{info['storage'].get('free_gb', 'N/A')} GB Free / {info['storage'].get('total_gb', 'N/A')} GB Total` | Available Disk Storage |
 | **Hardware OpenCL** | `{info['opencl_available']}` | Adreno/Mali GPU Discovery |
 
 ---

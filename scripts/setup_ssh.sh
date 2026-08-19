@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ==============================================================================
-# termux-train (AMEVA-Termux) - SSH Always-On Server Daemon Script
+# termux-train (AMEVA-Termux) - SSH Server Script
 # ==============================================================================
 
 set -e
@@ -16,10 +16,6 @@ if ! command -v sshd >/dev/null 2>&1; then
     echo "[*] Installing openssh..."
     pkg install -y openssh
 fi
-
-# Ensure Wake-Lock
-echo "[*] Requesting Wake-Lock..."
-termux-wake-lock 2>/dev/null || true
 
 # Start sshd daemon
 sshd -p $PORT

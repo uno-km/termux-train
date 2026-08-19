@@ -38,7 +38,7 @@ from termux_train import Tensor, nn
 | **1. Tensor API** | **우리가 직접 설계** | PyTorch 호환 0-Dependency 순수 텐서 인터페이스 |
 | **2. Autograd Graph** | **우리가 직접 설계** | Dynamic Reverse-Mode DAG 그래프 및 위상정렬 미분 엔진 |
 | **3. Backend Engine** | **Python Fallback + NumPy Optional** | 0-Dep 순수 파이썬 기본 탑재 + NumPy C-가속 플러그형 백엔드 |
-| **4. MobileTrainer** | **우리가 직접 개발** | 배터리(<20%)/발열(>43°C)/RAM 가드 + 원자적 체크포인트 복구 |
+| **4. MobileTrainer** | **우리가 직접 개발** | 명시적 학습 제어 + 원자적 체크포인트 저장·복구 |
 | **5. On-Device LoRA** | **우리가 직접 개발** | 스마트폰 환경 저메모리 Base Weight Freeze + Low-Rank Adapter 파인튜닝 |
 
 ---
@@ -205,7 +205,7 @@ termux-train/
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
 ├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime Demos
-└── tests/                    # 232 Unit, Backend, Autograd, NN, Optim, Runtime, Training Test Suites
+└── tests/                    # 236 Unit, Backend, Autograd, NN, Optim, Runtime, Training Test Suites
 ```
 
 ---

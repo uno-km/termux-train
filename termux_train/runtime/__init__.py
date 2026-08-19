@@ -11,6 +11,7 @@ from .checkpoint import (
     CheckpointError,
     CheckpointIntegrityError,
     CheckpointSchemaError,
+    CheckpointRollbackError,
 )
 from .trainer import MobileTrainer
 
@@ -20,5 +21,6 @@ __all__ = [
     "CheckpointError",
     "CheckpointIntegrityError",
     "CheckpointSchemaError",
+    "CheckpointRollbackError",
     "MobileTrainer",
 ]

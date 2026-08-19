@@ -1,6 +1,6 @@
-# 📱 Android Termux SSH Always-On Connection Guide
+# 📱 Android Termux SSH Connection Guide
 
-본 가이드는 Android 스마트폰/태블릿 기기의 Termux를 PC와 무선으로 연결하여 개발 및 실시간 학습을 진행하기 위한 **SSH 상시 접속 세팅 절차**입니다.
+본 가이드는 Android 스마트폰/태블릿 기기의 Termux를 PC와 무선으로 연결하여 개발 및 학습을 진행하기 위한 **SSH 접속 세팅 절차**입니다.
 
 ---
 
@@ -9,23 +9,18 @@
 1. **Termux 실행 후 SSH 및 빌드 툴 설치**:
    ```bash
    pkg update && pkg upgrade -y
-   pkg install openssh termux-api git python -y
+   pkg install openssh git python -y
    ```
 2. **비밀번호 설정 (최초 1회)**:
    ```bash
    passwd
    ```
-3. **절전 방지(Wake-Lock) 활성화**:
-   ```bash
-   termux-wake-lock
-   ```
-   *(안드로이드 설정 $\rightarrow$ 애플리케이션 $\rightarrow$ Termux $\rightarrow$ 배터리 $\rightarrow$ **'제한 없음'** 설정 필수)*
-4. **SSH 서버 실행**:
+3. **SSH 서버 실행**:
    ```bash
    sshd
    ```
    *(기본 포트는 `8022`)*
-5. **사용자명 및 IP 확인**:
+4. **사용자명 및 IP 확인**:
    ```bash
    whoami
    # 출력 예: u0_a123

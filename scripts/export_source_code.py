@@ -84,7 +84,7 @@ def main():
         f"Snapshot State: {'HEAD + working tree snapshot' if porcelain else 'HEAD snapshot'}\n"
         f"Operating System: {sys.platform}\n"
         f"Python Version: {sys.version.split()[0]}\n"
-        f"Current Stage: Sprint 4 Host Complete (Optimizers SGD/Adam/AdamW & XOR Training Complete)\n"
+        f"Current Stage: Sprint 5 Host Complete (Mobile Training Runtime & Safe Checkpointing)\n"
         f"Target Release: 0.1.0-alpha On-Device Training Engine\n\n\n"
     )
 

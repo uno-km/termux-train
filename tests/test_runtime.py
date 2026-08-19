@@ -138,6 +138,26 @@ def test_checkpoint_schema_mismatch_rejection(temp_dir, active_backend):
         load_checkpoint(ckpt_path)
 
 
+def test_checkpoint_version_mismatch_rejection(temp_dir, active_backend):
+    ckpt_path = os.path.join(temp_dir, "bad_version.json")
+    save_checkpoint(ckpt_path, epoch=1, global_step=1)
+
+    with open(ckpt_path, "r", encoding="utf-8") as f:
+        container = json.load(f)
+
+    container["payload"]["version"] = "99.0"
+    import hashlib
+    container["checksum"] = hashlib.sha256(
+        json.dumps(container["payload"], sort_keys=True, indent=2).encode("utf-8")
+    ).hexdigest()
+
+    with open(ckpt_path, "w", encoding="utf-8") as f:
+        json.dump(container, f)
+
+    with pytest.raises(CheckpointSchemaError, match="Unsupported checkpoint version"):
+        load_checkpoint(ckpt_path)
+
+
 def test_checkpoint_atomic_load_rollback_on_failure(temp_dir, active_backend):
     model = nn.Linear(2, 2)
     optimizer = optim.Adam(model.parameters(), lr=0.01)
@@ -159,6 +179,24 @@ def test_checkpoint_atomic_load_rollback_on_failure(temp_dir, active_backend):
     # Atomic rollback: incompatible model and optimizer must remain completely untouched
     assert incompatible_model.weight.tolist() == orig_incompat_weight
     assert incompatible_opt.defaults["lr"] == orig_incompat_lr
+
+
+def test_checkpoint_rollback_failure_raises_rollback_error(temp_dir, active_backend):
+    from termux_train.runtime.checkpoint import CheckpointRollbackError
+    model = nn.Linear(2, 2)
+    ckpt_path = os.path.join(temp_dir, "corrupt_rollback.json")
+    save_checkpoint(ckpt_path, model=model, epoch=1)
+
+    # Broken model where both load_state_dict and rollback fail
+    class BrokenModel(nn.Module):
+        def state_dict(self):
+            return {"dummy": 1}
+        def load_state_dict(self, state):
+            raise RuntimeError("load failed intentionally")
+
+    broken = BrokenModel()
+    with pytest.raises(CheckpointRollbackError, match="AND atomic rollback also failed"):
+        load_checkpoint(ckpt_path, model=broken)
 
 
 # =============================================================================

@@ -27,6 +27,10 @@ class CheckpointSchemaError(CheckpointError):
     """Raised when checkpoint structure or version is invalid."""
     pass
 
+class CheckpointRollbackError(CheckpointError):
+    """Raised when checkpoint loading failed AND rollback of previous state also failed."""
+    pass
+
 
 def save_checkpoint(
     path: str,
@@ -165,6 +169,9 @@ def load_checkpoint(
     if not isinstance(payload, dict) or payload.get("format") != "termux-train-checkpoint":
         raise CheckpointSchemaError(f"Unsupported checkpoint format in {path}: {payload.get('format')}")
 
+    if payload.get("version") != "1.0":
+        raise CheckpointSchemaError(f"Unsupported checkpoint version in {path}: {payload.get('version')}")
+
     epoch = payload.get("epoch", 0)
     global_step = payload.get("global_step", 0)
 
@@ -192,17 +199,23 @@ def load_checkpoint(
             optimizer.load_state_dict(optimizer_state)
     except Exception as e:
         # Full rollback to preserve pre-call state
+        rollback_errors = []
         if model is not None and orig_model_state is not None:
             try:
                 model.load_state_dict(orig_model_state)
-            except Exception:
-                pass
+            except Exception as r_err:
+                rollback_errors.append(f"model rollback failed: {r_err}")
 
         if optimizer is not None and orig_optimizer_state is not None:
             try:
                 optimizer.load_state_dict(orig_optimizer_state)
-            except Exception:
-                pass
+            except Exception as r_err:
+                rollback_errors.append(f"optimizer rollback failed: {r_err}")
+
+        if rollback_errors:
+            raise CheckpointRollbackError(
+                f"Checkpoint load failed ({e}) AND atomic rollback also failed: {'; '.join(rollback_errors)}"
+            ) from e
 
         raise e
 
