@@ -8,6 +8,8 @@ Provides atomic crash-resilient checkpointing, rollback guarantees, and MobileTr
 from .checkpoint import (
     save_checkpoint,
     load_checkpoint,
+    save_lora_checkpoint,
+    load_lora_checkpoint,
     CheckpointError,
     CheckpointIntegrityError,
     CheckpointSchemaError,
@@ -18,6 +20,8 @@ from .trainer import MobileTrainer
 __all__ = [
     "save_checkpoint",
     "load_checkpoint",
+    "save_lora_checkpoint",
+    "load_lora_checkpoint",
     "CheckpointError",
     "CheckpointIntegrityError",
     "CheckpointSchemaError",

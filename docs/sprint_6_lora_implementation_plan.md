@@ -142,7 +142,7 @@ Implemented & Hardened:
 ## Phase 3: SCRUM-310 - Transactional Merge and Unmerge
 - **Status**: Host Complete
 - **Base Commit**: `6971097` (`Add transactional LoRA merge lifecycle`)
-- **Hardening Commit**: `Harden LoRA merge lifecycle invariants`
+- **Hardening Commit**: `45fd1da` (`Harden LoRA merge lifecycle invariants`)
 - **Host Tests**: `401 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
@@ -171,20 +171,29 @@ Implemented & Hardened:
 ---
 
 ## Phase 4: SCRUM-311 - Safe LoRA Checkpoint Integration
-- **Status**: Current Task
-Implement:
-- unmerged-only adapter checkpoint policy
-- adapter checkpoint schema
-- atomic save and load
-- corruption detection
-- rollback integration
+- **Status**: Host Complete
+- **Commit Message**: `Integrate safe LoRA adapter checkpointing`
+- **Host Tests**: `416 passed, 1 warning`
+- **Android Termux Gate**: `PENDING`
 
-Commit:
-`Integrate safe LoRA adapter checkpointing`
+Implemented & Hardened:
+- `save_lora_checkpoint()` & `load_lora_checkpoint()` public APIs
+- Dedicated `termux-train-lora-checkpoint` schema version `1.0`
+- Adapter-only model state serialization via `adapter_state_dict(model)`
+- Adapter-only optimizer identity and ordering validation via `adapter_parameters(model)`
+- Strict unmerged-only policy on saving and loading with stale snapshot rejection
+- Base weight, base bias, and merge snapshot exclusion from payload
+- SHA-256 integrity verification over canonical JSON serialization (`sort_keys=True, separators=(',', ':'), allow_nan=False`)
+- Crash-safe temp write (`<path>.tmp`), `flush`, `os.fsync`, and atomic `os.replace`
+- Two-phase transactional load with full atomic rollback on adapter or optimizer restoration failure
+- Failure injection protection during file write, serialization, and deserialization
+- Cross-backend adapter checkpoint portability (PythonBackend ↔ NumPyBackend)
+- Parameter identity, optimizer reference, and `requires_grad` preservation
 
 ---
 
 ## Phase 5: SCRUM-312 - MobileTrainer and Toy Fine-tuning
+- **Status**: Current Task
 Implement:
 - adapter-only MobileTrainer flow
 - teacher-student adaptation experiment
