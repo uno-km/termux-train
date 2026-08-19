@@ -242,12 +242,22 @@ class LoRALinear(Module):
     def merge(self) -> None:
         """
         adapter delta를 base weight에 반영합니다 (W_base <- W_base + (A @ B) * scaling).
-        merge 직전의 base weight deep snapshot을 내부에 보관하여 unmerge 시 비트 단위 복원을 지원합니다.
+        merge 직전의 base weight backend-native deep snapshot을 내부에 보관하여 unmerge 시 정확한 복원을 지원합니다.
         Base Parameter 객체 식별자(id)와 requires_grad=False는 온전히 유지됩니다.
-        이미 merged 상태에서 재호출 시 RuntimeError를 발생시킵니다.
+        이미 merged 상태이거나 unmerged 상태에서 snapshot이 존재하는 경우 RuntimeError를 발생시킵니다.
         """
         if self._merged:
             raise RuntimeError("LoRALinear is already merged")
+        if self._base_weight_snapshot is not None:
+            raise RuntimeError("LoRALinear has an unexpected base weight snapshot while unmerged")
+
+        if (
+            isinstance(self.scaling, bool)
+            or not isinstance(self.scaling, (int, float))
+            or not math.isfinite(float(self.scaling))
+            or float(self.scaling) <= 0.0
+        ):
+            raise ValueError(f"scaling factor must be a finite positive number, got {self.scaling}")
 
         b = self.base.weight.backend
         if self.lora_A.backend.name != b.name or self.lora_B.backend.name != b.name:
@@ -265,10 +275,17 @@ class LoRALinear(Module):
         if self.base.weight.shape != (self.in_features, self.out_features):
             raise ValueError(f"base.weight shape mismatch: expected {(self.in_features, self.out_features)}, got {self.base.weight.shape}")
 
+        expected_shape = self.base.weight.shape
+
         # 2. Native calculation
         delta = b.matmul(self.lora_A._data, self.lora_B._data)
-        delta = b.mul(delta, self.scaling)
+        if b.get_shape(delta) != expected_shape:
+            raise RuntimeError(f"Computed delta shape mismatch: expected {expected_shape}, got {b.get_shape(delta)}")
+
+        delta = b.mul(delta, float(self.scaling))
         merged_weight = b.add(self.base.weight._data, delta)
+        if b.get_shape(merged_weight) != expected_shape:
+            raise RuntimeError(f"Computed merged_weight shape mismatch: expected {expected_shape}, got {b.get_shape(merged_weight)}")
 
         # Validate merged weight
         flat_merged = b.to_flat_list(merged_weight)
@@ -314,7 +331,7 @@ class LoRALinear(Module):
         merge 시점의 backend-native deep snapshot을 복원하여 base weight를 merge 이전 상태로 되돌립니다.
         현재 adapter delta를 빼는 방식이 아니므로, merge 이후 adapter가 변경되었더라도 원본 base weight를 정확히 복원합니다.
         Base Parameter 객체 식별자(id)와 requires_grad=False는 온전히 유지됩니다.
-        unmerged 상태에서 호출 시 RuntimeError를 발생시킵니다.
+        unmerged 상태이거나 snapshot이 누락/손상된 경우 RuntimeError를 발생시킵니다.
         """
         if not self._merged:
             raise RuntimeError("LoRALinear is not merged")
@@ -322,6 +339,12 @@ class LoRALinear(Module):
             raise RuntimeError("Missing base weight snapshot for unmerge")
 
         b = self.base.weight.backend
+        snap_shape = b.get_shape(self._base_weight_snapshot)
+        if snap_shape != self.base.weight.shape:
+            raise RuntimeError(
+                f"Base weight snapshot shape mismatch: expected {self.base.weight.shape}, got {snap_shape}"
+            )
+
         flat_snap = b.to_flat_list(self._base_weight_snapshot)
         for v in flat_snap:
             if not math.isfinite(v):
@@ -544,7 +567,8 @@ def merge_lora_adapters(module: Module) -> None:
     """
     모듈 계층 내의 모든 LoRALinear 레이어를 재귀적으로 탐색하여 일괄 merge를 수행합니다.
     공유 모듈(shared module)은 중복 merge되지 않도록 한 번만 처리합니다.
-    어느 한 레이어라도 이미 merged 상태이거나 검증/계산에 실패하면 어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
+    어느 한 레이어라도 이미 merged 상태이거나 unmerged 상태에서 snapshot이 존재하는 경우, 또는 검증/계산에 실패하면
+    어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
     커밋 도중 예외가 발생할 경우 모든 레이어를 호출 전 상태로 원자적 롤백합니다.
     LoRALinear가 없는 빈 모듈에 대해서는 안전하게 no-op으로 종료합니다.
     """
@@ -556,10 +580,20 @@ def merge_lora_adapters(module: Module) -> None:
     for layer in layers:
         if layer.merged:
             raise RuntimeError("One or more LoRALinear layers are already merged")
+        if layer._base_weight_snapshot is not None:
+            raise RuntimeError("One or more LoRALinear layers have an unexpected base weight snapshot while unmerged")
 
     # Phase 1: Preflight & Stage for all layers
     staged: List[Tuple[LoRALinear, Any, Any, Any, Any, bool]] = []
     for layer in layers:
+        if (
+            isinstance(layer.scaling, bool)
+            or not isinstance(layer.scaling, (int, float))
+            or not math.isfinite(float(layer.scaling))
+            or float(layer.scaling) <= 0.0
+        ):
+            raise ValueError(f"scaling factor must be a finite positive number in layer, got {layer.scaling}")
+
         b = layer.base.weight.backend
         if layer.lora_A.backend.name != b.name or layer.lora_B.backend.name != b.name:
             raise RuntimeError("Cross-backend LoRALinear parameters are not supported for merge")
@@ -575,9 +609,16 @@ def merge_lora_adapters(module: Module) -> None:
         if layer.base.weight.shape != (layer.in_features, layer.out_features):
             raise ValueError(f"base.weight shape mismatch: expected {(layer.in_features, layer.out_features)}, got {layer.base.weight.shape}")
 
+        expected_shape = layer.base.weight.shape
+
         delta = b.matmul(layer.lora_A._data, layer.lora_B._data)
-        delta = b.mul(delta, layer.scaling)
+        if b.get_shape(delta) != expected_shape:
+            raise RuntimeError(f"Computed delta shape mismatch: expected {expected_shape}, got {b.get_shape(delta)}")
+
+        delta = b.mul(delta, float(layer.scaling))
         merged_weight = b.add(layer.base.weight._data, delta)
+        if b.get_shape(merged_weight) != expected_shape:
+            raise RuntimeError(f"Computed merged_weight shape mismatch: expected {expected_shape}, got {b.get_shape(merged_weight)}")
 
         flat_merged = b.to_flat_list(merged_weight)
         for v in flat_merged:
@@ -625,7 +666,7 @@ def unmerge_lora_adapters(module: Module) -> None:
     """
     모듈 계층 내의 모든 LoRALinear 레이어를 재귀적으로 탐색하여 일괄 unmerge를 수행합니다.
     공유 모듈은 한 번만 처리합니다.
-    어느 한 레이어라도 unmerged 상태이거나 snapshot이 누락된 경우 어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
+    어느 한 레이어라도 unmerged 상태이거나 snapshot이 누락/손상된 경우 어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
     커밋 도중 예외가 발생할 경우 모든 레이어의 merged 상태를 원자적으로 복원합니다.
     LoRALinear가 없는 빈 모듈에 대해서는 안전하게 no-op으로 종료합니다.
     """
@@ -644,6 +685,12 @@ def unmerge_lora_adapters(module: Module) -> None:
     staged: List[Tuple[LoRALinear, Any, Any, Any, bool]] = []
     for layer in layers:
         b = layer.base.weight.backend
+        snap_shape = b.get_shape(layer._base_weight_snapshot)
+        if snap_shape != layer.base.weight.shape:
+            raise RuntimeError(
+                f"Base weight snapshot shape mismatch in layer: expected {layer.base.weight.shape}, got {snap_shape}"
+            )
+
         flat_snap = b.to_flat_list(layer._base_weight_snapshot)
         for v in flat_snap:
             if not math.isfinite(v):

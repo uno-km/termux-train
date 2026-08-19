@@ -141,8 +141,9 @@ Implemented & Hardened:
 
 ## Phase 3: SCRUM-310 - Transactional Merge and Unmerge
 - **Status**: Host Complete
-- **Commit Message**: `Add transactional LoRA merge lifecycle`
-- **Host Tests**: `393 passed, 1 warning`
+- **Base Commit**: `6971097` (`Add transactional LoRA merge lifecycle`)
+- **Hardening Commit**: `Harden LoRA merge lifecycle invariants`
+- **Host Tests**: `401 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
 Implemented & Hardened:
@@ -152,6 +153,10 @@ Implemented & Hardened:
 - Forward parity is verified with explicit tolerance (`abs=1e-6, rel=1e-6`)
 - Exact merge-time backend-native deep snapshot restoration (`_base_weight_snapshot`)
 - Unmerge restores snapshot exactly under successful backend assignment (no delta subtraction drift)
+- State-pair lifecycle invariant enforcement: rejects unmerged state with unexpected stale snapshot
+- Snapshot shape validation before unmerge assignment across single and recursive paths
+- Computed delta and merged_weight shape validation before merge commit
+- Runtime validation of scaling factor (finite, strictly positive numeric scalar)
 - Strict lifecycle transition policy: double merge rejection and invalid unmerge rejection
 - Adapter double-application prevention during merged forward
 - Transactional single-layer commit rollback and multi-layer model rollback

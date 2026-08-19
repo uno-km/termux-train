@@ -1307,3 +1307,115 @@ def test_lora_empty_module_merge_unmerge_noop(active_backend):
     # Safe no-op
     merge_lora_adapters(plain_model)
     unmerge_lora_adapters(plain_model)
+
+
+def test_lora_unmerged_with_stale_snapshot_single_and_recursive_rejections(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters
+
+    # 1. Single layer
+    layer = nn.LoRALinear(4, 2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+    layer._base_weight_snapshot = layer.base.weight.backend.from_data([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]])
+
+    with pytest.raises(RuntimeError, match="unexpected base weight snapshot while unmerged"):
+        layer.merge()
+
+    assert layer.merged is False
+    assert layer.base.weight.tolist() == orig_base
+
+    # 2. Recursive model
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2),
+        nn.LoRALinear(6, 2, rank=2),
+    )
+    orig_m0_base = copy.deepcopy(model[0].base.weight.tolist())
+    orig_m1_base = copy.deepcopy(model[1].base.weight.tolist())
+    model[1]._base_weight_snapshot = model[1].base.weight.backend.from_data([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0], [9.0, 10.0], [11.0, 12.0]])
+
+    with pytest.raises(RuntimeError, match="unexpected base weight snapshot while unmerged"):
+        merge_lora_adapters(model)
+
+    assert model[0].merged is False
+    assert model[0]._base_weight_snapshot is None
+    assert model[0].base.weight.tolist() == orig_m0_base
+    assert model[1].merged is False
+    assert model[1].base.weight.tolist() == orig_m1_base
+
+
+def test_lora_unmerge_snapshot_shape_mismatch_rejections(active_backend):
+    from termux_train.nn.lora import unmerge_lora_adapters
+
+    # 1. Single layer
+    layer = nn.LoRALinear(4, 2, rank=2)
+    layer.merge()
+    merged_base = copy.deepcopy(layer.base.weight.tolist())
+
+    # Corrupt snapshot shape (e.g. 3x2 instead of 4x2)
+    layer._base_weight_snapshot = layer.base.weight.backend.from_data([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+
+    with pytest.raises(RuntimeError, match="snapshot shape mismatch"):
+        layer.unmerge()
+
+    assert layer.merged is True
+    assert layer.base.weight.tolist() == merged_base
+
+    # 2. Recursive model
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2),
+        nn.LoRALinear(6, 2, rank=2),
+    )
+    model[0].merge()
+    model[1].merge()
+    orig_m0_merged = copy.deepcopy(model[0].base.weight.tolist())
+    orig_m1_merged = copy.deepcopy(model[1].base.weight.tolist())
+
+    # Corrupt model[1] snapshot shape
+    model[1]._base_weight_snapshot = model[1].base.weight.backend.from_data([[1.0, 2.0]])
+
+    with pytest.raises(RuntimeError, match="snapshot shape mismatch"):
+        unmerge_lora_adapters(model)
+
+    assert model[0].merged is True
+    assert model[0].base.weight.tolist() == orig_m0_merged
+    assert model[1].merged is True
+    assert model[1].base.weight.tolist() == orig_m1_merged
+
+
+def test_lora_merge_delta_and_merged_weight_shape_mismatch_rejections(active_backend):
+    layer = nn.LoRALinear(4, 2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+    orig_b = layer.base.weight.backend
+
+    # Monkeypatch matmul on backend to return wrong shape
+    orig_matmul = orig_b.matmul
+    try:
+        orig_b.matmul = lambda a, b: orig_b.from_data([[1.0], [2.0]])
+        with pytest.raises(RuntimeError, match="Computed delta shape mismatch"):
+            layer.merge()
+    finally:
+        orig_b.matmul = orig_matmul
+
+    assert layer.merged is False
+    assert layer._base_weight_snapshot is None
+    assert layer.base.weight.tolist() == orig_base
+
+
+def test_lora_merge_scaling_runtime_validation_rejections(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters
+
+    layer = nn.LoRALinear(4, 2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+
+    for bad_scaling in [True, False, float("nan"), float("inf"), float("-inf"), 0.0, -1.5, "1.0", None]:
+        layer._scaling = bad_scaling
+        with pytest.raises(ValueError, match="scaling factor must be a finite positive number"):
+            layer.merge()
+        assert layer.merged is False
+        assert layer._base_weight_snapshot is None
+        assert layer.base.weight.tolist() == orig_base
+
+    # Recursive check
+    model = nn.Sequential(nn.LoRALinear(4, 6, rank=2))
+    model[0]._scaling = 0.0
+    with pytest.raises(ValueError, match="scaling factor must be a finite positive number"):
+        merge_lora_adapters(model)
