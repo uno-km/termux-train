@@ -118,8 +118,9 @@ Implemented:
 ## Phase 2: SCRUM-309 - Adapter-only State Serialization
 - **Status**: Host Complete
 - **Base Commit**: `881bce2` (`Add atomic LoRA adapter state serialization`)
-- **Hardening Focus**: Crash-resilient commit-failure rollback, strict key/metadata type validation
-- **Host Tests**: `359 passed, 1 warning`
+- **Hardening Commit 1**: `1ad912f` (`Harden atomic LoRA adapter state loading`)
+- **Hardening Commit 2**: `Harden LoRA model adapter container schema`
+- **Host Tests**: `363 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
 Implemented & Hardened:
@@ -131,7 +132,7 @@ Implemented & Hardened:
 - Single-layer pre-commit native snapshot and exception rollback
 - Recursive multi-layer pre-commit snapshot and exception rollback
 - Strict metadata bool, type, finite, and value checking (`in_features`, `out_features`, `rank`, `alpha`)
-- Container schema validation (`adapters` dict check, string key enforcement)
+- Model adapter container schema validation (`_validate_model_adapter_container`, string key enforcement, `version="1.0"`, single-layer container unwrap)
 - Parameter identity (`id(lora_A)`, `id(lora_B)`, `id(base.weight)`, `id(base.bias)`) preservation
 - `requires_grad` and optimizer parameter reference preservation
 - PythonBackend ↔ NumPyBackend cross-backend portability

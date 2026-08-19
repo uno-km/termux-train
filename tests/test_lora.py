@@ -780,3 +780,101 @@ def test_lora_strict_false_with_malformed_present_field_raises(active_backend):
 
     # Parameter remains untouched
     assert layer.lora_A.tolist() == orig_a
+
+
+def test_single_layer_rejects_model_container_schema_mismatch(active_backend):
+    from termux_train.nn.lora import load_adapter_state_dict
+
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_a = copy.deepcopy(layer.lora_A.tolist())
+    orig_b = copy.deepcopy(layer.lora_B.tolist())
+    orig_a_id = id(layer.lora_A)
+    orig_b_id = id(layer.lora_B)
+
+    valid_layer_state = layer.adapter_state_dict()
+
+    # 1. Outer version mismatch (e.g. 999.0)
+    container_bad_ver = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "999.0",
+        "adapters": {"0": valid_layer_state},
+    }
+    with pytest.raises(ValueError, match="Unsupported model adapter version"):
+        load_adapter_state_dict(layer, container_bad_ver)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 2. Outer version missing in strict=True
+    container_missing_ver = {
+        "format": "termux-train-lora-model-adapter",
+        "adapters": {"0": valid_layer_state},
+    }
+    with pytest.raises(ValueError, match="Missing model adapter keys"):
+        load_adapter_state_dict(layer, container_missing_ver, strict=True)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 3. Outer unexpected key in strict=True
+    container_unexpected = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": {"0": valid_layer_state},
+        "extra_key": 123,
+    }
+    with pytest.raises(ValueError, match="Unexpected model adapter keys"):
+        load_adapter_state_dict(layer, container_unexpected, strict=True)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 4. Adapters entry is not a dict
+    container_bad_entry = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": {"0": "not_a_dict"},
+    }
+    with pytest.raises(TypeError, match="must be a dict"):
+        load_adapter_state_dict(layer, container_bad_entry)
+    assert layer.lora_A.tolist() == orig_a
+
+    # 5. Adapters has count != 1 for single LoRALinear
+    container_multi = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": {"0": valid_layer_state, "1": valid_layer_state},
+    }
+    with pytest.raises(ValueError, match="expected 1 for single LoRALinear"):
+        load_adapter_state_dict(layer, container_multi)
+    assert layer.lora_A.tolist() == orig_a
+
+    # Verify Parameter identity preserved
+    assert id(layer.lora_A) == orig_a_id
+    assert id(layer.lora_B) == orig_b_id
+
+
+def test_container_model_rejects_outer_schema_mismatch(active_backend):
+    from termux_train.nn.lora import adapter_state_dict, load_adapter_state_dict
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+    orig_a = copy.deepcopy(model[0].lora_A.tolist())
+    valid_state = adapter_state_dict(model)
+
+    # 1. Outer unexpected key in strict=True
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["unwanted"] = "foo"
+    with pytest.raises(ValueError, match="Unexpected model adapter keys"):
+        load_adapter_state_dict(model, bad_state, strict=True)
+    assert model[0].lora_A.tolist() == orig_a
+
+    # 2. Outer version mismatch
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["version"] = "999.0"
+    with pytest.raises(ValueError, match="Unsupported model adapter version"):
+        load_adapter_state_dict(model, bad_state)
+    assert model[0].lora_A.tolist() == orig_a
+
+    # 3. Outer adapters entry is not a dict
+    bad_state = copy.deepcopy(valid_state)
+    bad_state["adapters"]["0"] = [1, 2, 3]
+    with pytest.raises(TypeError, match="must be a dict"):
+        load_adapter_state_dict(model, bad_state)
+    assert model[0].lora_A.tolist() == orig_a

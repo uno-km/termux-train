@@ -468,6 +468,43 @@ def adapter_state_dict(module: Module) -> Dict[str, Any]:
     }
 
 
+def _validate_model_adapter_container(state_dict: Dict[str, Any], strict: bool) -> Dict[str, Any]:
+    """
+    Validates the outer schema of a model adapter container and returns the inner adapters dict.
+    Strictly checks format, version, string keys, and adapter entry types.
+    """
+    _validate_string_keys(state_dict, "model adapter state")
+
+    expected_keys = {"format", "version", "adapters"}
+    actual_keys = set(state_dict.keys())
+
+    if strict:
+        missing = expected_keys - actual_keys
+        if missing:
+            raise ValueError(f"Missing model adapter keys: {sorted(missing)}")
+        unexpected = actual_keys - expected_keys
+        if unexpected:
+            raise ValueError(f"Unexpected model adapter keys: {sorted(unexpected)}")
+
+    if state_dict.get("format") != "termux-train-lora-model-adapter":
+        raise ValueError(f"Unsupported model adapter format: {state_dict.get('format')!r}")
+
+    if state_dict.get("version") != "1.0":
+        raise ValueError(f"Unsupported model adapter version: {state_dict.get('version')!r}")
+
+    adapters = state_dict.get("adapters")
+    if not isinstance(adapters, dict):
+        raise TypeError(f"'adapters' must be a dict, got {type(adapters).__name__}")
+
+    _validate_string_keys(adapters, "adapter path")
+
+    for k, v in adapters.items():
+        if not isinstance(v, dict):
+            raise TypeError(f"Adapter state entry for '{k}' must be a dict, got {type(v).__name__}")
+
+    return adapters
+
+
 def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: bool = True) -> None:
     """
     Recursively loads adapter states into all LoRALinear layers within the given module hierarchy.
@@ -481,16 +518,15 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
 
     # Case 1: Single LoRALinear layer
     if isinstance(module, LoRALinear):
-        if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
-            adapters = state_dict["adapters"]
-            if not isinstance(adapters, dict):
-                raise TypeError(f"'adapters' must be a dict, got {type(adapters).__name__}")
-            _validate_string_keys(adapters, "adapter path")
-            if len(adapters) == 1:
-                single_key = next(iter(adapters))
-                module.load_adapter_state_dict(adapters[single_key], strict=strict)
-                return
-            raise ValueError(f"Model adapter container has {len(adapters)} layers, expected 1 for single LoRALinear")
+        if state_dict.get("format") == "termux-train-lora-model-adapter":
+            adapters = _validate_model_adapter_container(state_dict, strict=strict)
+            if len(adapters) != 1:
+                raise ValueError(
+                    f"Model adapter container has {len(adapters)} layers, expected 1 for single LoRALinear"
+                )
+            single_state = next(iter(adapters.values()))
+            module.load_adapter_state_dict(single_state, strict=strict)
+            return
         module.load_adapter_state_dict(state_dict, strict=strict)
         return
 
@@ -517,13 +553,8 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
 
     # Extract adapter dictionary
     adapters_data: Dict[str, Any] = {}
-    if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
-        if state_dict.get("version") != "1.0":
-            raise ValueError(f"Unsupported model adapter version: {state_dict.get('version')!r}")
-        adapters_data = state_dict["adapters"]
-        if not isinstance(adapters_data, dict):
-            raise TypeError(f"'adapters' must be a dict, got {type(adapters_data).__name__}")
-        _validate_string_keys(adapters_data, "adapter path")
+    if state_dict.get("format") == "termux-train-lora-model-adapter":
+        adapters_data = _validate_model_adapter_container(state_dict, strict=strict)
     elif all(isinstance(k, str) and k in layers for k in state_dict.keys()):
         adapters_data = state_dict
     else:
