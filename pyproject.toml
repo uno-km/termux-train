@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "termux-train"
+version = "0.1.0-alpha"
+description = "Native On-Device Deep Learning & Autograd Training Framework for Android Termux"
+readme = "README.md"
+authors = [{ name = "AMEVA Team" }]
+license = { text = "Apache-2.0" }
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Android",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["termux", "android", "autograd", "deep-learning", "on-device-training", "lora"]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.optional-dependencies]
+accelerated = ["numpy>=1.20.0"]
+test = ["pytest>=7.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["termux_train*"]
