@@ -191,10 +191,16 @@ trainer.fit(dataset=(x, target), epochs=50, resume_from="./checkpoints/checkpoin
 
 ### 🎯 On-Device LoRA Adapter Fine-Tuning & Deployment (`MobileTrainer`)
 
+> [!NOTE]
+> **LoRA Checkpoint v1.0 Boundary & Base Model Reconstruction:**
+> - LoRA checkpoint v1.0 stores adapter parameters and optimizer states only (excluding base model weights and biases).
+> - When resuming training in a fresh process or session, first reconstruct the compatible pretrained base model, wrap it with the identical LoRA topology (matching `rank` and `alpha`), construct an adapter-only optimizer, and resume via `MobileTrainer.fit(..., resume_from=...)`.
+> - Base model architecture/identity fingerprint verification is outside the scope of v1.0.
+
 ```python
 from termux_train import Tensor, nn, optim, runtime
 
-# 1. Setup Frozen Base & LoRA Adapters
+# 1. Setup Pretrained Base Model & Inject LoRA Adapters
 base_model = nn.Sequential(nn.Linear(4, 16), nn.Tanh(), nn.Linear(16, 2))
 student = nn.Sequential(
     nn.LoRALinear.from_linear(base_model[0], rank=2, alpha=4.0),
@@ -214,12 +220,29 @@ trainer = runtime.MobileTrainer(
     lora_only=True,
 )
 
-# 3. Train & Resume
+# 3. Fine-tune LoRA Adapters
 trainer.fit(dataset=(train_x, train_target), epochs=20)
-trainer.fit(dataset=(train_x, train_target), epochs=20, resume_from="./checkpoints/checkpoint_latest.json")
 
-# 4. Zero-Overhead Inference Deployment Merge
-nn.merge_lora_adapters(student)
+# 4. Resume Fine-Tuning in Fresh Session / Interrupted Process
+# Reconstruct identical compatible base model and LoRA topology
+fresh_base = nn.Sequential(nn.Linear(4, 16), nn.Tanh(), nn.Linear(16, 2))
+fresh_student = nn.Sequential(
+    nn.LoRALinear.from_linear(fresh_base[0], rank=2, alpha=4.0),
+    nn.Tanh(),
+    nn.LoRALinear.from_linear(fresh_base[2], rank=2, alpha=4.0),
+)
+fresh_optimizer = optim.Adam(nn.adapter_parameters(fresh_student), lr=0.08)
+fresh_trainer = runtime.MobileTrainer(
+    model=fresh_student,
+    optimizer=fresh_optimizer,
+    criterion=criterion,
+    checkpoint_dir="./checkpoints",
+    lora_only=True,
+)
+fresh_trainer.fit(dataset=(train_x, train_target), epochs=20, resume_from="./checkpoints/checkpoint_latest.json")
+
+# 5. Zero-Overhead Inference Deployment Merge
+nn.merge_lora_adapters(fresh_student)
 ```
 
 ---
