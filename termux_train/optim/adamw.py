@@ -2,9 +2,12 @@
 termux_train.optim.adamw
 ========================
 AdamW (Adam with Decoupled Weight Decay) Optimizer.
+Fully hardened with real-number type validation, fail-fast finite checks, atomic state schemas,
+and non-destructive decoupled decay calculations.
 """
 
-from typing import Iterable, Tuple
+import copy
+from typing import Iterable, Tuple, Dict, Any
 from .optimizer import Optimizer
 from ..nn.parameter import Parameter
 
@@ -28,26 +31,82 @@ class AdamW(Optimizer):
         eps: float = 1e-8,
         weight_decay: float = 1e-2,
     ):
-        if lr <= 0.0:
-            raise ValueError(f"Invalid learning rate: {lr} (must be > 0)")
-        if eps <= 0.0:
-            raise ValueError(f"Invalid epsilon value: {eps} (must be > 0)")
-        if not isinstance(betas, (tuple, list)) or len(betas) != 2:
-            raise ValueError(f"betas must be a tuple/list of two floats, got {betas}")
-        if not (0.0 <= betas[0] < 1.0):
-            raise ValueError(f"Invalid beta parameter at index 0: {betas[0]} (must be in [0.0, 1.0))")
-        if not (0.0 <= betas[1] < 1.0):
-            raise ValueError(f"Invalid beta parameter at index 1: {betas[1]} (must be in [0.0, 1.0))")
-        if weight_decay < 0.0:
-            raise ValueError(f"Invalid weight_decay value: {weight_decay} (must be >= 0)")
-
-        defaults = dict(
+        raw_defaults = dict(
             lr=lr,
-            betas=(float(betas[0]), float(betas[1])),
+            betas=betas,
             eps=eps,
             weight_decay=weight_decay,
         )
-        super().__init__(params, defaults)
+        super().__init__(params, raw_defaults)
+
+    def _validate_and_normalize_defaults(self, defaults: Dict[str, Any]) -> Dict[str, Any]:
+        """Validates and normalizes AdamW hyperparameters."""
+        if "lr" not in defaults:
+            raise ValueError("AdamW defaults missing 'lr'")
+        lr = self._validate_real("lr", defaults["lr"], strictly_positive=True)
+
+        if "eps" not in defaults:
+            raise ValueError("AdamW defaults missing 'eps'")
+        eps = self._validate_real("eps", defaults["eps"], strictly_positive=True)
+
+        weight_decay = self._validate_real("weight_decay", defaults.get("weight_decay", 1e-2), allow_negative=False)
+
+        betas = defaults.get("betas", (0.9, 0.999))
+        if not isinstance(betas, (tuple, list)) or len(betas) != 2:
+            raise ValueError(f"betas must be a tuple/list of two real numbers, got {betas}")
+
+        beta1 = self._validate_real("betas[0]", betas[0], allow_negative=False)
+        beta2 = self._validate_real("betas[1]", betas[1], allow_negative=False)
+
+        if not (0.0 <= beta1 < 1.0):
+            raise ValueError(f"Invalid beta1 parameter: {beta1} (must be in [0.0, 1.0))")
+        if not (0.0 <= beta2 < 1.0):
+            raise ValueError(f"Invalid beta2 parameter: {beta2} (must be in [0.0, 1.0))")
+
+        return dict(
+            lr=lr,
+            betas=(beta1, beta2),
+            eps=eps,
+            weight_decay=weight_decay,
+        )
+
+    def _validate_state_entry(self, index: int, param: Parameter, state_entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Validates and restores AdamW parameter state entry."""
+        if "step" not in state_entry:
+            raise ValueError(f"State entry for parameter {index} missing 'step'")
+        step_val = state_entry["step"]
+        if isinstance(step_val, bool) or not isinstance(step_val, int) or step_val < 0:
+            raise ValueError(f"optimizer step must be a non-negative integer, got {step_val}")
+
+        if "exp_avg" not in state_entry:
+            raise ValueError(f"State entry for parameter {index} missing 'exp_avg'")
+        exp_avg_raw = state_entry["exp_avg"]
+        if not isinstance(exp_avg_raw, list):
+            raise TypeError(f"exp_avg for parameter {index} must be a list structure")
+        exp_avg_data = param.backend.from_data(copy.deepcopy(exp_avg_raw))
+        if tuple(param.backend.get_shape(exp_avg_data)) != tuple(param.shape):
+            raise RuntimeError(
+                f"Shape mismatch for exp_avg parameter {index}: expected {param.shape}, got {param.backend.get_shape(exp_avg_data)}"
+            )
+        self._assert_all_finite(param, exp_avg_data, f"exp_avg for parameter {index}")
+
+        if "exp_avg_sq" not in state_entry:
+            raise ValueError(f"State entry for parameter {index} missing 'exp_avg_sq'")
+        exp_avg_sq_raw = state_entry["exp_avg_sq"]
+        if not isinstance(exp_avg_sq_raw, list):
+            raise TypeError(f"exp_avg_sq for parameter {index} must be a list structure")
+        exp_avg_sq_data = param.backend.from_data(copy.deepcopy(exp_avg_sq_raw))
+        if tuple(param.backend.get_shape(exp_avg_sq_data)) != tuple(param.shape):
+            raise RuntimeError(
+                f"Shape mismatch for exp_avg_sq parameter {index}: expected {param.shape}, got {param.backend.get_shape(exp_avg_sq_data)}"
+            )
+        self._assert_all_finite(param, exp_avg_sq_data, f"exp_avg_sq for parameter {index}")
+
+        return {
+            "step": step_val,
+            "exp_avg": exp_avg_data,
+            "exp_avg_sq": exp_avg_sq_data,
+        }
 
     def step(self) -> None:
         """Performs a single optimization step with decoupled weight decay."""
@@ -57,24 +116,20 @@ class AdamW(Optimizer):
         weight_decay = self.defaults["weight_decay"]
 
         for idx, p in enumerate(self.params):
-            if p.grad is None or not p.requires_grad:
+            if not self._validate_param_and_grad(idx, p):
                 continue
 
-            if p.grad.shape != p.shape:
-                raise RuntimeError(
-                    f"Gradient shape {p.grad.shape} does not match parameter shape {p.shape}"
-                )
-            if p.grad.backend.name != p.backend.name:
-                raise RuntimeError(
-                    f"Gradient backend ({p.grad.backend.name}) does not match parameter backend ({p.backend.name})"
-                )
+            self._assert_all_finite(p, p._data, f"parameter {idx}")
+            self._assert_all_finite(p, p.grad._data, f"gradient for parameter {idx}")
 
-            # 1. Decoupled Weight Decay: theta_t = theta_(t-1) * (1 - lr * lambda)
+            # 1. Non-destructive Decoupled Weight Decay: theta_decayed = theta_(t-1) * (1 - lr * lambda)
+            decayed_param_data = p._data
             if weight_decay != 0.0:
-                p._data = p.backend.mul(
+                decayed_param_data = p.backend.mul(
                     p._data,
                     1.0 - lr * weight_decay
                 )
+                self._assert_all_finite(p, decayed_param_data, f"decoupled decayed parameter {idx}")
 
             # 2. Pure gradient (unpolluted by weight decay)
             grad_data = p.grad._data
@@ -88,28 +143,30 @@ class AdamW(Optimizer):
                 }
 
             state = self.state[idx]
+            self._assert_all_finite(p, state["exp_avg"], f"previous exp_avg for parameter {idx}")
+            self._assert_all_finite(p, state["exp_avg_sq"], f"previous exp_avg_sq for parameter {idx}")
+
             state["step"] += 1
             step_count = state["step"]
 
             # 4. Update biased 1st and 2nd moment estimates
-            # exp_avg = beta1 * exp_avg + (1 - beta1) * grad
             state["exp_avg"] = p.backend.add(
                 p.backend.mul(state["exp_avg"], beta1),
                 p.backend.mul(grad_data, 1.0 - beta1)
             )
+            self._assert_all_finite(p, state["exp_avg"], f"new exp_avg for parameter {idx}")
 
-            # exp_avg_sq = beta2 * exp_avg_sq + (1 - beta2) * (grad ** 2)
             grad_sq = p.backend.mul(grad_data, grad_data)
             state["exp_avg_sq"] = p.backend.add(
                 p.backend.mul(state["exp_avg_sq"], beta2),
                 p.backend.mul(grad_sq, 1.0 - beta2)
             )
+            self._assert_all_finite(p, state["exp_avg_sq"], f"new exp_avg_sq for parameter {idx}")
 
             # 5. Bias Corrections
             bias_correction1 = 1.0 - (beta1 ** step_count)
             bias_correction2 = 1.0 - (beta2 ** step_count)
 
-            # Corrected moments: m_hat, v_hat
             m_hat = p.backend.div(state["exp_avg"], bias_correction1)
             v_hat = p.backend.div(state["exp_avg_sq"], bias_correction2)
 
@@ -117,6 +174,13 @@ class AdamW(Optimizer):
             sqrt_v = p.backend.pow(v_hat, 0.5)
             denom = p.backend.add(sqrt_v, eps)
 
-            # 7. Parameter update: theta_t = theta_t - lr * (m_hat / denom)
+            # 7. Step update from pure gradient
             step_update = p.backend.mul(p.backend.div(m_hat, denom), lr)
-            p._data = p.backend.sub(p._data, step_update)
+            self._assert_all_finite(p, step_update, f"step update for parameter {idx}")
+
+            # 8. Final parameter: theta_t = theta_decayed - step_update
+            new_param_data = p.backend.sub(decayed_param_data, step_update)
+            self._assert_all_finite(p, new_param_data, f"new parameter data for parameter {idx}")
+
+            # Apply parameter update only after all checks pass
+            p._data = new_param_data

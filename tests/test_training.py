@@ -30,30 +30,28 @@ def test_xor_convergence_adam(active_backend):
     optimizer = optim.Adam(model.parameters(), lr=0.05)
     criterion = nn.MSELoss()
 
-    initial_loss = None
-    final_loss = None
+    init_pred = model(x)
+    initial_loss = criterion(init_pred, target).item()
 
     for epoch in range(1, 1000):
         optimizer.zero_grad()
         pred = model(x)
         loss = criterion(pred, target)
-
-        if initial_loss is None:
-            initial_loss = loss.item()
-
         loss.backward()
         optimizer.step()
 
-        if loss.item() < 0.02:
-            final_loss = loss.item()
+        # Post-step evaluation
+        eval_pred = model(x)
+        eval_loss = criterion(eval_pred, target).item()
+        eval_classes = [1 if row[0] >= 0.5 else 0 for row in eval_pred.tolist()]
+
+        if eval_loss < 0.02 and eval_classes == [0, 1, 1, 0]:
             break
 
-    if final_loss is None:
-        final_loss = loss.item()
-
-    # Accuracy check
-    preds = model(x)
-    pred_vals = [row[0] for row in preds.tolist()]
+    # Final post-step evaluation
+    final_pred = model(x)
+    final_loss = criterion(final_pred, target).item()
+    pred_vals = [row[0] for row in final_pred.tolist()]
     target_vals = [row[0] for row in target.tolist()]
     accuracy = sum(1 for pv, tv in zip(pred_vals, target_vals) if (1 if pv >= 0.5 else 0) == int(tv)) / 4.0
 
@@ -81,29 +79,26 @@ def test_xor_convergence_sgd_momentum(active_backend):
     optimizer = optim.SGD(model.parameters(), lr=0.5, momentum=0.9)
     criterion = nn.MSELoss()
 
-    initial_loss = None
-    final_loss = None
+    init_pred = model(x)
+    initial_loss = criterion(init_pred, target).item()
 
     for epoch in range(1, 1500):
         optimizer.zero_grad()
         pred = model(x)
         loss = criterion(pred, target)
-
-        if initial_loss is None:
-            initial_loss = loss.item()
-
         loss.backward()
         optimizer.step()
 
-        if loss.item() < 0.02:
-            final_loss = loss.item()
+        eval_pred = model(x)
+        eval_loss = criterion(eval_pred, target).item()
+        eval_classes = [1 if row[0] >= 0.5 else 0 for row in eval_pred.tolist()]
+
+        if eval_loss < 0.02 and eval_classes == [0, 1, 1, 0]:
             break
 
-    if final_loss is None:
-        final_loss = loss.item()
-
-    preds = model(x)
-    pred_vals = [row[0] for row in preds.tolist()]
+    final_pred = model(x)
+    final_loss = criterion(final_pred, target).item()
+    pred_vals = [row[0] for row in final_pred.tolist()]
     target_vals = [row[0] for row in target.tolist()]
     accuracy = sum(1 for pv, tv in zip(pred_vals, target_vals) if (1 if pv >= 0.5 else 0) == int(tv)) / 4.0
 
@@ -126,29 +121,26 @@ def test_xor_convergence_adamw(active_backend):
     optimizer = optim.AdamW(model.parameters(), lr=0.05, weight_decay=1e-4)
     criterion = nn.MSELoss()
 
-    initial_loss = None
-    final_loss = None
+    init_pred = model(x)
+    initial_loss = criterion(init_pred, target).item()
 
     for epoch in range(1, 1000):
         optimizer.zero_grad()
         pred = model(x)
         loss = criterion(pred, target)
-
-        if initial_loss is None:
-            initial_loss = loss.item()
-
         loss.backward()
         optimizer.step()
 
-        if loss.item() < 0.02:
-            final_loss = loss.item()
+        eval_pred = model(x)
+        eval_loss = criterion(eval_pred, target).item()
+        eval_classes = [1 if row[0] >= 0.5 else 0 for row in eval_pred.tolist()]
+
+        if eval_loss < 0.02 and eval_classes == [0, 1, 1, 0]:
             break
 
-    if final_loss is None:
-        final_loss = loss.item()
-
-    preds = model(x)
-    pred_vals = [row[0] for row in preds.tolist()]
+    final_pred = model(x)
+    final_loss = criterion(final_pred, target).item()
+    pred_vals = [row[0] for row in final_pred.tolist()]
     target_vals = [row[0] for row in target.tolist()]
     accuracy = sum(1 for pv, tv in zip(pred_vals, target_vals) if (1 if pv >= 0.5 else 0) == int(tv)) / 4.0
 
