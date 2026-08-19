@@ -4,7 +4,7 @@ termux_train.nn.lora
 Low-Rank Adaptation (LoRA) Layer for Parameter-Efficient On-Device Fine-Tuning.
 Freezes pre-trained base Linear weights and learns decomposed low-rank matrices
 lora_A (in_features, rank) and lora_B (rank, out_features) with scaling factor alpha / rank.
-Supports atomic, cross-backend adapter-only state serialization and restoration.
+Supports atomic, crash-resilient, cross-backend adapter-only state serialization and restoration.
 """
 
 import copy
@@ -16,6 +16,34 @@ from .parameter import Parameter
 from .linear import Linear
 from ..tensor import Tensor
 from ..backend import get_backend, BaseBackend
+
+
+def _validate_positive_int_metadata(value: Any, expected: int, name: str) -> None:
+    """Validates that a metadata value is a strictly positive integer (not bool) matching expected value."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"'{name}' must be an integer, got {type(value).__name__}")
+    if value < 1:
+        raise ValueError(f"'{name}' must be >= 1, got {value}")
+    if value != expected:
+        raise ValueError(f"{name} mismatch: expected {expected}, got {value}")
+
+
+def _validate_alpha_metadata(value: Any, expected: float) -> None:
+    """Validates that alpha is a finite positive numeric scalar (not bool) matching expected value."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"'alpha' must be a finite number, got {type(value).__name__}")
+    f_val = float(value)
+    if not math.isfinite(f_val) or f_val <= 0.0:
+        raise ValueError(f"'alpha' must be finite and positive, got {value}")
+    if f_val != expected:
+        raise ValueError(f"alpha mismatch: expected {expected}, got {value}")
+
+
+def _validate_string_keys(d: Dict[Any, Any], context_name: str) -> None:
+    """Validates that all keys in dictionary are strings."""
+    non_str = [k for k in d if not isinstance(k, str)]
+    if non_str:
+        raise TypeError(f"{context_name} keys must be strings, found non-string keys: {non_str!r}")
 
 
 def _validate_2d_matrix_data(data: Any, expected_shape: Tuple[int, int], name: str) -> None:
@@ -222,16 +250,18 @@ class LoRALinear(Module):
         Atomically loads adapter parameters from state_dict into this LoRALinear layer.
 
         Two-phase atomic commit:
-          1. Pre-validates all metadata (format, version, shapes, finite scalars).
+          1. Pre-validates all metadata, schema, and 2D matrix buffers.
           2. Builds pending native backend buffers.
-          3. Commits only after 100% validation success.
-          If any validation error occurs, current parameters remain 100% untouched.
+          3. Creates snapshot of existing native buffers.
+          4. Commits pending buffers with automatic rollback on commit exception.
         """
         if self._merged:
             raise RuntimeError("Cannot load adapter state into a merged LoRALinear layer. Unmerge before loading.")
 
         if not isinstance(state_dict, dict):
             raise TypeError(f"state_dict must be a dict, got {type(state_dict).__name__}")
+
+        _validate_string_keys(state_dict, "adapter state")
 
         expected_keys = {"format", "version", "in_features", "out_features", "rank", "alpha", "lora_A", "lora_B"}
         actual_keys = set(state_dict.keys())
@@ -243,31 +273,38 @@ class LoRALinear(Module):
             unexpected_keys = actual_keys - expected_keys
             if unexpected_keys:
                 raise ValueError(f"Unexpected keys in adapter_state_dict: {sorted(unexpected_keys)}")
-        else:
-            if "format" in state_dict and state_dict["format"] != "termux-train-lora-adapter":
-                raise ValueError(f"Unsupported adapter format: {state_dict['format']}")
-            if "version" in state_dict and state_dict["version"] != "1.0":
-                raise ValueError(f"Unsupported adapter version: {state_dict['version']}")
 
         if "format" in state_dict:
-            if state_dict["format"] != "termux-train-lora-adapter":
-                raise ValueError(f"Unsupported adapter format: {state_dict['format']}")
+            if not isinstance(state_dict["format"], str) or state_dict["format"] != "termux-train-lora-adapter":
+                raise ValueError(f"Unsupported adapter format: {state_dict['format']!r}")
+        elif strict:
+            raise ValueError("Missing required key 'format'")
+
         if "version" in state_dict:
-            if state_dict["version"] != "1.0":
-                raise ValueError(f"Unsupported adapter version: {state_dict['version']}")
+            if not isinstance(state_dict["version"], str) or state_dict["version"] != "1.0":
+                raise ValueError(f"Unsupported adapter version: {state_dict['version']!r}")
+        elif strict:
+            raise ValueError("Missing required key 'version'")
 
         if "in_features" in state_dict:
-            if state_dict["in_features"] != self.in_features:
-                raise ValueError(f"in_features mismatch: expected {self.in_features}, got {state_dict['in_features']}")
+            _validate_positive_int_metadata(state_dict["in_features"], self.in_features, "in_features")
+        elif strict:
+            raise ValueError("Missing required key 'in_features'")
+
         if "out_features" in state_dict:
-            if state_dict["out_features"] != self.out_features:
-                raise ValueError(f"out_features mismatch: expected {self.out_features}, got {state_dict['out_features']}")
+            _validate_positive_int_metadata(state_dict["out_features"], self.out_features, "out_features")
+        elif strict:
+            raise ValueError("Missing required key 'out_features'")
+
         if "rank" in state_dict:
-            if state_dict["rank"] != self.rank:
-                raise ValueError(f"rank mismatch: expected {self.rank}, got {state_dict['rank']}")
+            _validate_positive_int_metadata(state_dict["rank"], self.rank, "rank")
+        elif strict:
+            raise ValueError("Missing required key 'rank'")
+
         if "alpha" in state_dict:
-            if state_dict["alpha"] != self.alpha:
-                raise ValueError(f"alpha mismatch: expected {self.alpha}, got {state_dict['alpha']}")
+            _validate_alpha_metadata(state_dict["alpha"], self.alpha)
+        elif strict:
+            raise ValueError("Missing required key 'alpha'")
 
         # Pre-validate and stage pending buffers
         pending_A_data = None
@@ -285,11 +322,32 @@ class LoRALinear(Module):
         elif strict:
             raise ValueError("Missing 'lora_B' in adapter_state_dict")
 
-        # Atomic commit
-        if pending_A_data is not None:
-            self.lora_A._data = pending_A_data
-        if pending_B_data is not None:
-            self.lora_B._data = pending_B_data
+        # Snapshot existing native buffers before commit
+        snapshot_A = self.lora_A.backend.from_data(copy.deepcopy(self.lora_A.tolist()))
+        snapshot_B = self.lora_B.backend.from_data(copy.deepcopy(self.lora_B.tolist()))
+
+        # Commit with rollback guarantee
+        try:
+            if pending_A_data is not None:
+                self.lora_A._data = pending_A_data
+            if pending_B_data is not None:
+                self.lora_B._data = pending_B_data
+        except Exception as commit_err:
+            rollback_errors = []
+            try:
+                self.lora_A._data = snapshot_A
+            except Exception as r_err_a:
+                rollback_errors.append(f"lora_A rollback failed: {r_err_a}")
+            try:
+                self.lora_B._data = snapshot_B
+            except Exception as r_err_b:
+                rollback_errors.append(f"lora_B rollback failed: {r_err_b}")
+
+            if rollback_errors:
+                raise RuntimeError(
+                    f"Commit failed ({commit_err}) AND atomic rollback failed: {'; '.join(rollback_errors)}"
+                ) from commit_err
+            raise commit_err
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -413,15 +471,21 @@ def adapter_state_dict(module: Module) -> Dict[str, Any]:
 def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: bool = True) -> None:
     """
     Recursively loads adapter states into all LoRALinear layers within the given module hierarchy.
-    Enforces two-phase atomic validation across all layers in the model before committing.
+    Enforces two-phase atomic validation across all layers in the model before committing,
+    and guarantees 100% rollback across all layers if any commit step fails.
     """
     if not isinstance(state_dict, dict):
         raise TypeError(f"state_dict must be a dict, got {type(state_dict).__name__}")
+
+    _validate_string_keys(state_dict, "adapter state")
 
     # Case 1: Single LoRALinear layer
     if isinstance(module, LoRALinear):
         if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
             adapters = state_dict["adapters"]
+            if not isinstance(adapters, dict):
+                raise TypeError(f"'adapters' must be a dict, got {type(adapters).__name__}")
+            _validate_string_keys(adapters, "adapter path")
             if len(adapters) == 1:
                 single_key = next(iter(adapters))
                 module.load_adapter_state_dict(adapters[single_key], strict=strict)
@@ -455,9 +519,12 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
     adapters_data: Dict[str, Any] = {}
     if state_dict.get("format") == "termux-train-lora-model-adapter" and "adapters" in state_dict:
         if state_dict.get("version") != "1.0":
-            raise ValueError(f"Unsupported model adapter version: {state_dict.get('version')}")
+            raise ValueError(f"Unsupported model adapter version: {state_dict.get('version')!r}")
         adapters_data = state_dict["adapters"]
-    elif all(k in layers for k in state_dict.keys()):
+        if not isinstance(adapters_data, dict):
+            raise TypeError(f"'adapters' must be a dict, got {type(adapters_data).__name__}")
+        _validate_string_keys(adapters_data, "adapter path")
+    elif all(isinstance(k, str) and k in layers for k in state_dict.keys()):
         adapters_data = state_dict
     else:
         # Check flat parameter dictionary: e.g. "0.lora_A", "0.lora_B"
@@ -485,6 +552,9 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
             adapters_data = reconstructed
         else:
             adapters_data = state_dict.get("adapters", state_dict)
+            if not isinstance(adapters_data, dict):
+                raise TypeError(f"'adapters' must be a dict, got {type(adapters_data).__name__}")
+            _validate_string_keys(adapters_data, "adapter path")
 
     if strict:
         expected_keys = set(layers.keys())
@@ -507,6 +577,8 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
         if not isinstance(l_state, dict):
             raise TypeError(f"State for layer '{l_key}' must be a dict, got {type(l_state).__name__}")
 
+        _validate_string_keys(l_state, f"layer '{l_key}' adapter state")
+
         if l_obj.merged:
             raise RuntimeError(f"Cannot load adapter state into merged layer '{l_key}'")
 
@@ -518,19 +590,37 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
             if act_l_keys - exp_l_keys:
                 raise ValueError(f"Unexpected keys in layer '{l_key}': {sorted(act_l_keys - exp_l_keys)}")
 
-        if "format" in l_state and l_state["format"] != "termux-train-lora-adapter":
-            raise ValueError(f"Unsupported adapter format in layer '{l_key}': {l_state['format']}")
-        if "version" in l_state and l_state["version"] != "1.0":
-            raise ValueError(f"Unsupported adapter version in layer '{l_key}': {l_state['version']}")
+        if "format" in l_state:
+            if not isinstance(l_state["format"], str) or l_state["format"] != "termux-train-lora-adapter":
+                raise ValueError(f"Unsupported adapter format in layer '{l_key}': {l_state['format']!r}")
+        elif strict:
+            raise ValueError(f"Missing required key 'format' in layer '{l_key}'")
 
-        if "in_features" in l_state and l_state["in_features"] != l_obj.in_features:
-            raise ValueError(f"in_features mismatch in layer '{l_key}': expected {l_obj.in_features}, got {l_state['in_features']}")
-        if "out_features" in l_state and l_state["out_features"] != l_obj.out_features:
-            raise ValueError(f"out_features mismatch in layer '{l_key}': expected {l_obj.out_features}, got {l_state['out_features']}")
-        if "rank" in l_state and l_state["rank"] != l_obj.rank:
-            raise ValueError(f"rank mismatch in layer '{l_key}': expected {l_obj.rank}, got {l_state['rank']}")
-        if "alpha" in l_state and l_state["alpha"] != l_obj.alpha:
-            raise ValueError(f"alpha mismatch in layer '{l_key}': expected {l_obj.alpha}, got {l_state['alpha']}")
+        if "version" in l_state:
+            if not isinstance(l_state["version"], str) or l_state["version"] != "1.0":
+                raise ValueError(f"Unsupported adapter version in layer '{l_key}': {l_state['version']!r}")
+        elif strict:
+            raise ValueError(f"Missing required key 'version' in layer '{l_key}'")
+
+        if "in_features" in l_state:
+            _validate_positive_int_metadata(l_state["in_features"], l_obj.in_features, f"{l_key}.in_features")
+        elif strict:
+            raise ValueError(f"Missing required key 'in_features' in layer '{l_key}'")
+
+        if "out_features" in l_state:
+            _validate_positive_int_metadata(l_state["out_features"], l_obj.out_features, f"{l_key}.out_features")
+        elif strict:
+            raise ValueError(f"Missing required key 'out_features' in layer '{l_key}'")
+
+        if "rank" in l_state:
+            _validate_positive_int_metadata(l_state["rank"], l_obj.rank, f"{l_key}.rank")
+        elif strict:
+            raise ValueError(f"Missing required key 'rank' in layer '{l_key}'")
+
+        if "alpha" in l_state:
+            _validate_alpha_metadata(l_state["alpha"], l_obj.alpha)
+        elif strict:
+            raise ValueError(f"Missing required key 'alpha' in layer '{l_key}'")
 
         pending_A = None
         pending_B = None
@@ -548,10 +638,36 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
 
         staged[l_key] = (pending_A, pending_B)
 
-    # Phase 2: Commit all staged buffers atomically
-    for l_key, (pending_A, pending_B) in staged.items():
+    # Phase 2: Create snapshots for all staged layers before commit
+    snapshots: List[Tuple[LoRALinear, Any, Any]] = []
+    for l_key in staged:
         l_obj = layers[l_key]
-        if pending_A is not None:
-            l_obj.lora_A._data = pending_A
-        if pending_B is not None:
-            l_obj.lora_B._data = pending_B
+        snap_A = l_obj.lora_A.backend.from_data(copy.deepcopy(l_obj.lora_A.tolist()))
+        snap_B = l_obj.lora_B.backend.from_data(copy.deepcopy(l_obj.lora_B.tolist()))
+        snapshots.append((l_obj, snap_A, snap_B))
+
+    # Phase 3: Commit all staged buffers atomically with multi-layer rollback
+    try:
+        for l_key, (pending_A, pending_B) in staged.items():
+            l_obj = layers[l_key]
+            if pending_A is not None:
+                l_obj.lora_A._data = pending_A
+            if pending_B is not None:
+                l_obj.lora_B._data = pending_B
+    except Exception as commit_err:
+        rollback_errors = []
+        for l_obj, snap_A, snap_B in snapshots:
+            try:
+                l_obj.lora_A._data = snap_A
+            except Exception as r_err_a:
+                rollback_errors.append(f"{l_obj}.lora_A rollback failed: {r_err_a}")
+            try:
+                l_obj.lora_B._data = snap_B
+            except Exception as r_err_b:
+                rollback_errors.append(f"{l_obj}.lora_B rollback failed: {r_err_b}")
+
+        if rollback_errors:
+            raise RuntimeError(
+                f"Multi-layer commit failed ({commit_err}) AND atomic rollback failed: {'; '.join(rollback_errors)}"
+            ) from commit_err
+        raise commit_err

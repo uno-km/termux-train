@@ -560,3 +560,223 @@ def test_lora_model_level_atomic_rollback_on_partial_failure(active_backend):
     # 100% Rollback: Layer 0 must NOT be modified even though its data was valid!
     assert model[0].lora_A.tolist() == orig_l0_a
     assert model[2].lora_B.tolist() == orig_l2_b
+
+
+# =============================================================================
+# 7. SCRUM-309 Hardening: Commit Failure Injection & Schema Strictness
+# =============================================================================
+
+def test_lora_single_layer_commit_failure_injection_rollback(active_backend):
+    """
+    Verifies that if an unexpected exception occurs DURING the assignment/commit step
+    (e.g., lora_A succeeds but lora_B fails), lora_A is completely rolled back to its snapshot.
+    """
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_A = copy.deepcopy(layer.lora_A.tolist())
+    orig_B = copy.deepcopy(layer.lora_B.tolist())
+    orig_A_id = id(layer.lora_A)
+    orig_B_id = id(layer.lora_B)
+    orig_W_id = id(layer.base.weight)
+    orig_bias_id = id(layer.base.bias)
+    orig_W_val = copy.deepcopy(layer.base.weight.tolist())
+    orig_bias_val = copy.deepcopy(layer.base.bias.tolist())
+
+    optimizer = optim.SGD(layer.adapter_parameters(), lr=0.1)
+
+    state = layer.adapter_state_dict()
+    state["lora_A"] = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]]
+    state["lora_B"] = [[1.0, 2.0], [3.0, 4.0]]
+
+    # Inject failure on lora_B during commit assignment
+    orig_cls = layer.lora_B.__class__
+
+    class CrashingParameter(orig_cls):
+        @property
+        def _data(self):
+            return self._backing_data
+
+        @_data.setter
+        def _data(self, value):
+            if getattr(self, "_trigger_crash", False):
+                raise RuntimeError("Simulated crash during lora_B commit")
+            self._backing_data = value
+
+    layer.lora_B._backing_data = layer.lora_B._data
+    layer.lora_B.__class__ = CrashingParameter
+    layer.lora_B._trigger_crash = True
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated crash during lora_B commit"):
+            layer.load_adapter_state_dict(state)
+    finally:
+        layer.lora_B._trigger_crash = False
+        layer.lora_B.__class__ = orig_cls
+        del layer.lora_B._backing_data
+
+    # 1. Full rollback: lora_A and lora_B are identical to pre-call snapshots
+    assert layer.lora_A.tolist() == orig_A
+    assert layer.lora_B.tolist() == orig_B
+
+    # 2. Base parameters untouched
+    assert layer.base.weight.tolist() == orig_W_val
+    assert layer.base.bias.tolist() == orig_bias_val
+
+    # 3. Parameter IDs & optimizer references preserved
+    assert id(layer.lora_A) == orig_A_id
+    assert id(layer.lora_B) == orig_B_id
+    assert id(layer.base.weight) == orig_W_id
+    assert id(layer.base.bias) == orig_bias_id
+    assert id(optimizer.params[0]) == orig_A_id
+    assert id(optimizer.params[1]) == orig_B_id
+    assert layer.lora_A.requires_grad is True
+    assert layer.lora_B.requires_grad is True
+    assert layer.base.weight.requires_grad is False
+    assert layer.merged is False
+
+
+def test_lora_recursive_model_commit_failure_injection_rollback(active_backend):
+    """
+    Verifies that in a multi-layer model, if layer 0 commit succeeds but layer 2 commit fails,
+    layer 0 is completely rolled back to its pre-call snapshot.
+    """
+    from termux_train.nn.lora import adapter_state_dict, load_adapter_state_dict
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.Tanh(),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+
+    orig_l0_A = copy.deepcopy(model[0].lora_A.tolist())
+    orig_l0_B = copy.deepcopy(model[0].lora_B.tolist())
+    orig_l2_A = copy.deepcopy(model[2].lora_A.tolist())
+    orig_l2_B = copy.deepcopy(model[2].lora_B.tolist())
+
+    state = adapter_state_dict(model)
+    state["adapters"]["0"]["lora_A"] = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]]
+    state["adapters"]["2"]["lora_B"] = [[1.0, 2.0], [3.0, 4.0]]
+
+    # Inject failure on model[2].lora_A during commit
+    orig_cls = model[2].lora_A.__class__
+
+    class CrashingParam(orig_cls):
+        @property
+        def _data(self):
+            return self._backing_data
+
+        @_data.setter
+        def _data(self, value):
+            if getattr(self, "_trigger_crash", False):
+                raise RuntimeError("Simulated crash during layer 2 commit")
+            self._backing_data = value
+
+    model[2].lora_A._backing_data = model[2].lora_A._data
+    model[2].lora_A.__class__ = CrashingParam
+    model[2].lora_A._trigger_crash = True
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated crash during layer 2 commit"):
+            load_adapter_state_dict(model, state)
+    finally:
+        model[2].lora_A._trigger_crash = False
+        model[2].lora_A.__class__ = orig_cls
+        del model[2].lora_A._backing_data
+
+    # Multi-layer rollback: Layer 0 AND Layer 2 must be 100% restored
+    assert model[0].lora_A.tolist() == orig_l0_A
+    assert model[0].lora_B.tolist() == orig_l0_B
+    assert model[2].lora_A.tolist() == orig_l2_A
+    assert model[2].lora_B.tolist() == orig_l2_B
+
+
+def test_lora_metadata_bool_and_type_rejections(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_state = layer.adapter_state_dict()
+
+    # 1. in_features=True (boolean rejection)
+    bad = copy.deepcopy(orig_state)
+    bad["in_features"] = True
+    with pytest.raises(TypeError, match="must be an integer"):
+        layer.load_adapter_state_dict(bad)
+
+    # 2. out_features=True (boolean rejection)
+    bad = copy.deepcopy(orig_state)
+    bad["out_features"] = True
+    with pytest.raises(TypeError, match="must be an integer"):
+        layer.load_adapter_state_dict(bad)
+
+    # 3. rank=True (boolean rejection)
+    bad = copy.deepcopy(orig_state)
+    bad["rank"] = True
+    with pytest.raises(TypeError, match="must be an integer"):
+        layer.load_adapter_state_dict(bad)
+
+    # 4. alpha=True (boolean rejection)
+    bad = copy.deepcopy(orig_state)
+    bad["alpha"] = True
+    with pytest.raises(TypeError, match="must be a finite number"):
+        layer.load_adapter_state_dict(bad)
+
+    # 5. alpha=NaN, Inf, -Inf
+    for bad_alpha in [float("nan"), float("inf"), float("-inf")]:
+        bad = copy.deepcopy(orig_state)
+        bad["alpha"] = bad_alpha
+        with pytest.raises(ValueError, match="must be finite"):
+            layer.load_adapter_state_dict(bad)
+
+
+def test_lora_container_schema_and_key_type_rejections(active_backend):
+    from termux_train.nn.lora import adapter_state_dict, load_adapter_state_dict
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+
+    # 1. adapters is list, None, string, int
+    for bad_adapters in [[], None, "bad", 123]:
+        bad_state = {
+            "format": "termux-train-lora-model-adapter",
+            "version": "1.0",
+            "adapters": bad_adapters,
+        }
+        with pytest.raises(TypeError, match="'adapters' must be a dict"):
+            load_adapter_state_dict(model, bad_state)
+
+    # 2. Non-string top-level key
+    bad_state = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": {},
+        123: "val",
+    }
+    with pytest.raises(TypeError, match="keys must be strings"):
+        load_adapter_state_dict(model, bad_state)
+
+    # 3. Non-string adapter path key
+    bad_state = {
+        "format": "termux-train-lora-model-adapter",
+        "version": "1.0",
+        "adapters": {123: {}},
+    }
+    with pytest.raises(TypeError, match="keys must be strings"):
+        load_adapter_state_dict(model, bad_state)
+
+    # 4. Single layer state dict with non-string key
+    single_layer = nn.LoRALinear(4, 2, rank=2)
+    with pytest.raises(TypeError, match="keys must be strings"):
+        single_layer.load_adapter_state_dict({123: "val"})
+
+
+def test_lora_strict_false_with_malformed_present_field_raises(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    orig_a = copy.deepcopy(layer.lora_A.tolist())
+    state = layer.adapter_state_dict()
+
+    # In strict=False, missing format/version or extra keys are ignored, but malformed lora_A must still raise!
+    state["lora_A"][0][0] = float("nan")
+    with pytest.raises(ValueError, match="must be finite"):
+        layer.load_adapter_state_dict(state, strict=False)
+
+    # Parameter remains untouched
+    assert layer.lora_A.tolist() == orig_a

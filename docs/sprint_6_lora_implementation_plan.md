@@ -116,36 +116,30 @@ Implemented:
 ---
 
 ## Phase 2: SCRUM-309 - Adapter-only State Serialization
-- **Status**: Current Task
+- **Status**: Host Complete
+- **Base Commit**: `881bce2` (`Add atomic LoRA adapter state serialization`)
+- **Hardening Focus**: Crash-resilient commit-failure rollback, strict key/metadata type validation
+- **Host Tests**: `359 passed, 1 warning`
+- **Android Termux Gate**: `PENDING`
 
-Implement:
+Implemented & Hardened:
 - `LoRALinear.adapter_state_dict()`
 - `LoRALinear.load_adapter_state_dict(state_dict, strict=True)`
 - `adapter_state_dict(module)`
 - `load_adapter_state_dict(module, state_dict, strict=True)`
-
-Required guarantees:
-- adapter-only state
-- no base parameter leakage
-- detached deep-copy state
-- deterministic fully-qualified keys
-- shared-module deduplication
-- strict and non-strict loading
-- complete pre-validation
-- two-phase atomic commit
-- full rollback on commit failure
-- Parameter identity preservation
-- `requires_grad` preservation
-- optimizer reference preservation
-- PythonBackend ↔ NumPyBackend portability
-- non-finite value rejection
-
-Commit:
-`Add atomic LoRA adapter state serialization`
+- Validation-atomic & commit-failure-atomic rollback guarantees
+- Single-layer pre-commit native snapshot and exception rollback
+- Recursive multi-layer pre-commit snapshot and exception rollback
+- Strict metadata bool, type, finite, and value checking (`in_features`, `out_features`, `rank`, `alpha`)
+- Container schema validation (`adapters` dict check, string key enforcement)
+- Parameter identity (`id(lora_A)`, `id(lora_B)`, `id(base.weight)`, `id(base.bias)`) preservation
+- `requires_grad` and optimizer parameter reference preservation
+- PythonBackend ↔ NumPyBackend cross-backend portability
 
 ---
 
 ## Phase 3: SCRUM-310 - Transactional Merge and Unmerge
+- **Status**: Current Task
 Implement:
 - `merge()`
 - `unmerge()`
