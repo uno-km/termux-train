@@ -64,7 +64,10 @@ Phase 7: SCRUM-319 - DocFold Sequence Mapping Toy Trainer & Convergence Gate
 
 ## 3. Phase Details & Commit Strategy
 
-### Phase 1: SCRUM-313 - Lightweight Tokenizer Interface (Current Task)
+### Phase 1: SCRUM-313 - Lightweight Tokenizer Interface (Host Complete)
+- **Status**: Host Complete
+- **Commit**: `f3e673d` (`Add deterministic lightweight tokenizers`)
+- **Host Tests**: `483 passed, 1 warning` (22 tokenization tests PASS)
 - **Files**:
   - `termux_train/tokenization/__init__.py`
   - `termux_train/tokenization/base.py`
@@ -78,7 +81,6 @@ Phase 7: SCRUM-319 - DocFold Sequence Mapping Toy Trainer & Convergence Gate
   - `ByteTokenizer`: UTF-8 byte-level tokenizer with complete 0~255 byte vocabulary, exact round-trip for valid UTF-8 strings.
   - `WordTokenizer`: Whitespace and punctuation preserving tokenizer with exact round-trip on known words without losing layout.
   - Pure Python, zero Tensor / NumPy dependencies.
-- **Commit Message**: `Add deterministic lightweight tokenizers`
 
 ### Phase 2: SCRUM-315 - Tiny Transformer Math Spec & Tensor Operators
 - **Files**:
