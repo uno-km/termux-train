@@ -173,7 +173,7 @@ Implemented & Hardened:
 ## Phase 4: SCRUM-311 - Safe LoRA Checkpoint Integration
 - **Status**: Host Complete
 - **Base Commit**: `834aba8` (`Integrate safe LoRA adapter checkpointing`)
-- **Hardening Commit**: `Harden LoRA checkpoint contracts`
+- **Hardening Commit**: `4005ee7` (`Harden LoRA checkpoint contracts`)
 - **Host Tests**: `436 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
