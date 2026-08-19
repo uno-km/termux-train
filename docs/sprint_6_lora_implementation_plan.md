@@ -172,22 +172,25 @@ Implemented & Hardened:
 
 ## Phase 4: SCRUM-311 - Safe LoRA Checkpoint Integration
 - **Status**: Host Complete
-- **Commit Message**: `Integrate safe LoRA adapter checkpointing`
-- **Host Tests**: `416 passed, 1 warning`
+- **Base Commit**: `834aba8` (`Integrate safe LoRA adapter checkpointing`)
+- **Hardening Commit**: `Harden LoRA checkpoint contracts`
+- **Host Tests**: `436 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
 Implemented & Hardened:
-- `save_lora_checkpoint()` & `load_lora_checkpoint()` public APIs
-- Dedicated `termux-train-lora-checkpoint` schema version `1.0`
+- `save_lora_checkpoint()` & `load_lora_checkpoint()` public APIs with complete combination matrix (A: model+optimizer, B: model only, C: metadata-only validation mode, D: model=None+optimizer rejected)
+- Dedicated `termux-train-lora-checkpoint` schema version `1.0` with exact outer and payload key validation
 - Adapter-only model state serialization via `adapter_state_dict(model)`
 - Adapter-only optimizer identity and ordering validation via `adapter_parameters(model)`
-- Strict unmerged-only policy on saving and loading with stale snapshot rejection
+- Strict unmerged-only policy on saving and loading with stale snapshot and corrupted state pair rejection
 - Base weight, base bias, and merge snapshot exclusion from payload
 - SHA-256 integrity verification over canonical JSON serialization (`sort_keys=True, separators=(',', ':'), allow_nan=False`)
 - Crash-safe temp write (`<path>.tmp`), `flush`, `os.fsync`, and atomic `os.replace`
+- Comprehensive file-system failure injection protection (serialization, open, write, flush, fsync, replace)
 - Two-phase transactional load with full atomic rollback on adapter or optimizer restoration failure
-- Failure injection protection during file write, serialization, and deserialization
-- Cross-backend adapter checkpoint portability (PythonBackend ↔ NumPyBackend)
+- Multi-failure aggregation and exception chaining reporting with `CheckpointRollbackError`
+- Cross-backend adapter checkpoint portability and next optimizer step numerical parity (PythonBackend ↔ NumPyBackend)
+- Shared module deduplication, nested container support, and extra metadata deep-copy isolation
 - Parameter identity, optimizer reference, and `requires_grad` preservation
 
 ---

@@ -61,6 +61,8 @@ def generate_tree(path: Path, prefix="") -> str:
                 lines.append(child_tree)
     return "\n".join(lines)
 
+CURRENT_STAGE = "Sprint 6 Host In Progress (On-Device LoRA Adapter & Safe Checkpointing)"
+
 def main():
     root = Path(__file__).resolve().parent.parent
     now = datetime.now()
@@ -84,7 +86,7 @@ def main():
         f"Snapshot State: {'HEAD + working tree snapshot' if porcelain else 'HEAD snapshot'}\n"
         f"Operating System: {sys.platform}\n"
         f"Python Version: {sys.version.split()[0]}\n"
-        f"Current Stage: Sprint 5 Host Complete (Mobile Training Runtime & Safe Checkpointing)\n"
+        f"Current Stage: {CURRENT_STAGE}\n"
         f"Target Release: 0.1.0-alpha On-Device Training Engine\n\n\n"
     )
 

@@ -42,8 +42,96 @@ class CheckpointRollbackError(CheckpointError):
 
 
 # =============================================================================
-# Helper Utilities for LoRA Checkpointing
+# Shared Private Helpers for Checkpointing Engine
 # =============================================================================
+
+def _canonical_json_bytes(payload: dict) -> bytes:
+    """Serializes payload to canonical, deterministic UTF-8 JSON bytes with no NaN/Inf."""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _compute_payload_checksum(payload: dict) -> str:
+    """Computes hexadecimal SHA-256 digest over canonical payload bytes."""
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
+def _validate_checksum_format(checksum: Any, context: str = "checkpoint") -> None:
+    """Validates that checksum is a 64-character lowercase hexadecimal string."""
+    if (
+        not isinstance(checksum, str)
+        or len(checksum) != 64
+        or not all(c in "0123456789abcdef" for c in checksum)
+    ):
+        raise CheckpointIntegrityError(f"Invalid SHA256 checksum format in {context}: {checksum!r}")
+
+
+def _validate_counter_scalar(val: Any, name: str, context: str = "checkpoint") -> None:
+    """Validates non-negative integer scalar counter (epoch, global_step)."""
+    if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+        raise CheckpointSchemaError(f"Invalid {name} in {context}: expected non-negative integer, got {val!r}")
+
+
+def _validate_timestamp_scalar(val: Any, context: str = "checkpoint") -> None:
+    """Validates finite non-negative numeric timestamp."""
+    if (
+        isinstance(val, bool)
+        or not isinstance(val, (int, float))
+        or not math.isfinite(float(val))
+        or float(val) < 0.0
+    ):
+        raise CheckpointSchemaError(f"Invalid timestamp in {context}: expected non-negative finite number, got {val!r}")
+
+
+def _validate_recursive_json_dict(val: Any, name: str = "extra") -> None:
+    """Recursively validates that dictionary contains only string keys and JSON-compatible values."""
+    if not isinstance(val, dict):
+        raise TypeError(f"{name} must be a dict, got {type(val).__name__}")
+
+    def _check_node(node: Any, path: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if not isinstance(k, str):
+                    raise TypeError(f"{name} contains non-string key {k!r} at {path or 'root'}")
+                _check_node(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, (list, tuple)):
+            for idx, item in enumerate(node):
+                _check_node(item, f"{path}[{idx}]")
+        elif node is None or isinstance(node, (str, bool)):
+            pass
+        elif isinstance(node, (int, float)):
+            if not math.isfinite(node):
+                raise ValueError(f"{name} contains non-finite number {node} at {path}")
+        else:
+            raise TypeError(f"{name} contains non-JSON-serializable type {type(node).__name__} at {path}")
+
+    _check_node(val, "")
+
+
+def _atomic_write_checkpoint(abs_path: str, container_json: str) -> None:
+    """Atomically writes container JSON via temporary file, fsync, and atomic rename."""
+    parent_dir = os.path.dirname(abs_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    tmp_path = f"{abs_path}.tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(container_json)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, abs_path)
+    except Exception as e:
+        cleanup_err = None
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception as c_err:
+                cleanup_err = c_err
+        err_msg = f"Failed to atomically save checkpoint to {abs_path}: {e}"
+        if cleanup_err is not None:
+            err_msg += f" (tmp cleanup failed: {cleanup_err})"
+        raise CheckpointError(err_msg) from e
+
 
 def _collect_all_lora_layers(module: Module) -> List[LoRALinear]:
     """Collects all unique LoRALinear layers within module hierarchy."""
@@ -173,7 +261,6 @@ def save_checkpoint(
             f.flush()
             os.fsync(f.fileno())
 
-        # Atomic rename: replaces target file instantaneously
         os.replace(tmp_path, abs_path)
     except Exception as e:
         if os.path.exists(tmp_path):
@@ -307,31 +394,41 @@ def save_lora_checkpoint(
     Atomically saves LoRA adapter parameters and adapter-only optimizer state to a JSON checkpoint.
 
     Guarantees:
+      - Model is required: model cannot be None and must contain >= 1 LoRALinear.
+      - Optimizer is optional: if None, optimizer_state is serialized as None.
       - Unmerged-only policy: Rejects models with merged LoRA layers or stale snapshots.
       - Base weight and bias exclusion: Only adapter factors (lora_A, lora_B) are serialized.
-      - Optimizer validation: Ensures optimizer exclusively tracks adapter parameters.
+      - Optimizer validation: Ensures optimizer exclusively tracks adapter parameters in exact order.
       - Atomic write: Writes to <path>.tmp, performs fsync, and atomic os.replace.
       - SHA-256 integrity: Computes deterministic checksum over canonical payload JSON.
     """
     if not isinstance(path, str) or not path.strip():
         raise ValueError("path must be a non-empty string")
 
-    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
-        raise ValueError(f"epoch must be a non-negative integer, got {epoch}")
+    if model is None:
+        raise TypeError("model is required and cannot be None")
 
-    if isinstance(global_step, bool) or not isinstance(global_step, int) or global_step < 0:
-        raise ValueError(f"global_step must be a non-negative integer, got {global_step}")
+    if not isinstance(model, Module):
+        raise TypeError(f"model must be a Module instance, got {type(model).__name__}")
+
+    _validate_counter_scalar(epoch, "epoch", "save_lora_checkpoint")
+    _validate_counter_scalar(global_step, "global_step", "save_lora_checkpoint")
 
     _validate_model_for_lora_checkpoint(model, "saving")
 
     if optimizer is not None:
         _validate_optimizer_for_lora_checkpoint(model, optimizer, "saving")
+        optimizer_state = optimizer.state_dict()
+    else:
+        optimizer_state = None
 
-    if extra is not None and not isinstance(extra, dict):
-        raise TypeError(f"extra must be a dict, got {type(extra).__name__}")
+    if extra is not None:
+        _validate_recursive_json_dict(extra, "extra")
+        extra_dict = copy.deepcopy(extra)
+    else:
+        extra_dict = {}
 
     adapter_state = adapter_state_dict(model)
-    optimizer_state = optimizer.state_dict() if optimizer is not None else None
 
     payload = {
         "format": "termux-train-lora-checkpoint",
@@ -341,15 +438,15 @@ def save_lora_checkpoint(
         "global_step": global_step,
         "adapter_state": adapter_state,
         "optimizer_state": optimizer_state,
-        "extra": copy.deepcopy(extra) if extra is not None else {},
+        "extra": extra_dict,
     }
 
     try:
-        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        payload_bytes = _canonical_json_bytes(payload)
     except Exception as e:
-        raise CheckpointError(f"Failed to serialize LoRA checkpoint payload to JSON: {e}") from e
+        raise CheckpointError(f"Failed to serialize LoRA checkpoint payload to canonical JSON: {e}") from e
 
-    checksum = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    checksum = hashlib.sha256(payload_bytes).hexdigest()
 
     container = {
         "checksum": checksum,
@@ -362,26 +459,7 @@ def save_lora_checkpoint(
         raise CheckpointError(f"Failed to serialize LoRA checkpoint container to JSON: {e}") from e
 
     abs_path = os.path.abspath(path)
-    parent_dir = os.path.dirname(abs_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
-    tmp_path = f"{abs_path}.tmp"
-
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(container_json)
-            f.flush()
-            os.fsync(f.fileno())
-
-        os.replace(tmp_path, abs_path)
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-        raise CheckpointError(f"Failed to atomically save LoRA checkpoint to {path}: {e}") from e
+    _atomic_write_checkpoint(abs_path, container_json)
 
 
 def load_lora_checkpoint(
@@ -392,12 +470,21 @@ def load_lora_checkpoint(
     """
     Atomically loads and validates a LoRA adapter checkpoint, restoring adapter factors and optimizer state.
 
+    API Combinations:
+      - Combination A (model, optimizer): Restores adapter state and optimizer state atomically.
+      - Combination B (model, optimizer=None): Restores adapter state only; skips optimizer state.
+      - Combination C (model=None, optimizer=None): Metadata-only validation mode. Mutates no state.
+      - Combination D (model=None, optimizer): Invalid. Raises ValueError.
+
     Guarantees:
       - SHA-256 integrity validation before touching model or optimizer.
-      - Unmerged-only policy: Rejects target models with merged LoRA layers.
+      - Unmerged-only policy: Rejects target models with merged LoRA layers or stale snapshots.
       - Two-phase transaction: Restores both adapter parameters and optimizer atomically.
       - Full rollback on load failure: Preserves exact pre-call state if loading fails at any point.
     """
+    if model is None and optimizer is not None:
+        raise ValueError("A model is required when loading LoRA optimizer state")
+
     if not isinstance(path, str) or not os.path.exists(path):
         raise FileNotFoundError(f"LoRA checkpoint file not found: {path}")
 
@@ -416,8 +503,7 @@ def load_lora_checkpoint(
         raise CheckpointSchemaError(f"Unexpected keys in LoRA checkpoint container: {sorted(actual_container_keys)}")
 
     expected_checksum = container["checksum"]
-    if not isinstance(expected_checksum, str) or len(expected_checksum) != 64:
-        raise CheckpointIntegrityError(f"Invalid checksum format in LoRA checkpoint {path}")
+    _validate_checksum_format(expected_checksum, path)
 
     payload = container["payload"]
     if not isinstance(payload, dict):
@@ -425,11 +511,11 @@ def load_lora_checkpoint(
 
     # Canonical JSON serialization for checksum verification
     try:
-        recomputed_payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        recomputed_payload_bytes = _canonical_json_bytes(payload)
     except Exception as e:
         raise CheckpointIntegrityError(f"Failed to canonicalize payload JSON for checksum in {path}: {e}") from e
 
-    actual_checksum = hashlib.sha256(recomputed_payload_json.encode("utf-8")).hexdigest()
+    actual_checksum = hashlib.sha256(recomputed_payload_bytes).hexdigest()
     if not hmac.compare_digest(actual_checksum, expected_checksum):
         raise CheckpointIntegrityError(
             f"Checkpoint checksum mismatch in {path}: expected {expected_checksum}, calculated {actual_checksum}"
@@ -446,17 +532,9 @@ def load_lora_checkpoint(
     if payload.get("version") != "1.0":
         raise CheckpointSchemaError(f"Unsupported LoRA checkpoint version in {path}: {payload.get('version')}")
 
-    timestamp = payload.get("timestamp")
-    if isinstance(timestamp, bool) or not isinstance(timestamp, (int, float)) or not math.isfinite(float(timestamp)):
-        raise CheckpointSchemaError(f"Invalid timestamp in LoRA checkpoint: {timestamp}")
-
-    epoch = payload.get("epoch")
-    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
-        raise CheckpointSchemaError(f"Invalid epoch in LoRA checkpoint: {epoch}")
-
-    global_step = payload.get("global_step")
-    if isinstance(global_step, bool) or not isinstance(global_step, int) or global_step < 0:
-        raise CheckpointSchemaError(f"Invalid global_step in LoRA checkpoint: {global_step}")
+    _validate_timestamp_scalar(payload.get("timestamp"), path)
+    _validate_counter_scalar(payload.get("epoch"), "epoch", path)
+    _validate_counter_scalar(payload.get("global_step"), "global_step", path)
 
     adapter_state = payload.get("adapter_state")
     if not isinstance(adapter_state, dict):
@@ -474,11 +552,20 @@ def load_lora_checkpoint(
         _validate_model_for_lora_checkpoint(model, "loading")
 
     if optimizer is not None:
-        if model is None:
-            raise ValueError("model must be provided when loading optimizer into LoRA checkpoint")
         _validate_optimizer_for_lora_checkpoint(model, optimizer, "loading")
+        if optimizer_state is None:
+            raise CheckpointSchemaError("LoRA checkpoint does not contain 'optimizer_state'")
 
-    # Snapshot current state before loading for atomic rollback
+    # Metadata-only mode
+    if model is None and optimizer is None:
+        return {
+            "epoch": payload["epoch"],
+            "global_step": payload["global_step"],
+            "timestamp": payload["timestamp"],
+            "extra": copy.deepcopy(extra),
+        }
+
+    # Snapshot current states before loading for atomic rollback
     orig_adapter_state = adapter_state_dict(model) if model is not None else None
     orig_optimizer_state = optimizer.state_dict() if optimizer is not None else None
 
@@ -487,8 +574,6 @@ def load_lora_checkpoint(
             load_adapter_state_dict(model, adapter_state, strict=True)
 
         if optimizer is not None:
-            if optimizer_state is None:
-                raise CheckpointSchemaError("LoRA checkpoint does not contain 'optimizer_state'")
             optimizer.load_state_dict(optimizer_state)
     except Exception as load_err:
         rollback_errors = []
@@ -510,8 +595,8 @@ def load_lora_checkpoint(
         raise load_err
 
     return {
-        "epoch": epoch,
-        "global_step": global_step,
-        "timestamp": timestamp,
+        "epoch": payload["epoch"],
+        "global_step": payload["global_step"],
+        "timestamp": payload["timestamp"],
         "extra": copy.deepcopy(extra),
     }

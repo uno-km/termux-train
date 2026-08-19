@@ -189,6 +189,30 @@ trainer.fit(dataset=(x, target), epochs=50)
 trainer.fit(dataset=(x, target), epochs=50, resume_from="./checkpoints/checkpoint_latest.json")
 ```
 
+### 🎯 On-Device LoRA Adapter Checkpointing
+
+```python
+from termux_train import nn, optim, runtime
+
+# Save adapter-only checkpoint (unmerged-only policy)
+lora_model = nn.Sequential(nn.LoRALinear(128, 64, rank=4), nn.Tanh(), nn.LoRALinear(64, 10, rank=4))
+lora_opt = optim.Adam(nn.adapter_parameters(lora_model), lr=0.01)
+
+runtime.save_lora_checkpoint(
+    path="./checkpoints/lora_adapter.json",
+    model=lora_model,
+    optimizer=lora_opt,
+    epoch=5,
+    global_step=100,
+    extra={"eval_loss": 0.015},
+)
+
+# Load into fresh adapter model (atomic rollback on failure)
+fresh_lora = nn.Sequential(nn.LoRALinear(128, 64, rank=4), nn.Tanh(), nn.LoRALinear(64, 10, rank=4))
+fresh_opt = optim.Adam(nn.adapter_parameters(fresh_lora), lr=0.01)
+meta = runtime.load_lora_checkpoint("./checkpoints/lora_adapter.json", model=fresh_lora, optimizer=fresh_opt)
+```
+
 ---
 
 ## 🏗️ Architecture
@@ -199,13 +223,13 @@ termux-train/
 │   ├── __init__.py           # Tensor, nn, optim, runtime, utils exports
 │   ├── tensor.py             # Pure-Python Tensor Data Model & DAG Graph
 │   ├── backend/              # Pluggable Compute Backends (Base, Python, NumPy)
-│   ├── nn/                   # Module, Parameter, Linear, Sequential, Activations, Losses
+│   ├── nn/                   # Module, Parameter, Linear, LoRALinear, Sequential, Activations, Losses
 │   ├── optim/                # First-Order Optimizers: SGD (Momentum, Nesterov), Adam, AdamW
 │   ├── runtime/              # MobileTrainer, Safe Atomic Checkpoint Save/Load & Recovery Engine
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
 ├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime Demos
-└── tests/                    # 236 Unit, Backend, Autograd, NN, Optim, Runtime, Training Test Suites
+└── tests/                    # Comprehensive Tensor, Backend, Autograd, NN, Optimizer, Runtime, LoRA, Checkpoint, and Training Test Suites
 ```
 
 ---
