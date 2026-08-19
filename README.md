@@ -115,35 +115,47 @@ print("w.grad:\n", w.grad)
 
 ---
 
-## 🧠 Neural Network Training Quickstart *(Planned: Sprint 4)*
+## 🧠 Neural Network Training Quickstart
 
 ```python
-# [Planned Sprint 4 Preview]
 from termux_train import Tensor, nn, optim
 
 # 1. Define Model
 model = nn.Sequential(
     nn.Linear(2, 8),
-    nn.ReLU(),
-    nn.Linear(8, 1)
+    nn.Tanh(),
+    nn.Linear(8, 1),
+    nn.Sigmoid(),
 )
 
 # 2. Setup Optimizer & Data
-optimizer = optim.SGD(model.parameters(), lr=0.1)
-x = Tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])
-y = Tensor([[0.0], [1.0], [1.0], [0.0]])
+optimizer = optim.Adam(model.parameters(), lr=0.05)
+criterion = nn.MSELoss()
 
-# 3. Mobile Training Loop
+x = Tensor([[0.0, 0.0], [0.0, 1.0], [1.0, 0.0], [1.0, 1.0]])
+target = Tensor([[0.0], [1.0], [1.0], [0.0]])
+
+# 3. Mobile Training Loop (XOR Convergence)
 for epoch in range(1000):
     optimizer.zero_grad()
     pred = model(x)
-    loss = nn.mse_loss(pred, y)
+    loss = criterion(pred, target)
     loss.backward()
     optimizer.step()
     
     if epoch % 200 == 0:
-        print(f"Epoch {epoch:4d} | Loss: {loss.item():.6f}")
+        print(f"Epoch {epoch:4d} | MSE Loss: {loss.item():.6f}")
 ```
+
+---
+
+## ⚡ Optimizers
+
+`termux_train.optim` provides first-order optimizers with full state serialization and pure Python / NumPy backend parity:
+
+- **`optim.SGD`**: Stochastic Gradient Descent with L2 weight decay, momentum factor $\mu$, dampening, and optional Nesterov accelerated gradient.
+- **`optim.Adam`**: Adaptive Moment Estimation with coupled L2 weight decay and numerical bias correction.
+- **`optim.AdamW`**: Decoupled Weight Decay Adam for modern Transformer & neural network training.
 
 ---
 
@@ -173,16 +185,16 @@ trainer.fit(dataset, epochs=10)
 ```
 termux-train/
 ├── termux_train/
-│   ├── __init__.py           # Tensor, nn, utils exports
+│   ├── __init__.py           # Tensor, nn, optim, utils exports
 │   ├── tensor.py             # Pure-Python Tensor Data Model & DAG Graph
 │   ├── backend/              # Pluggable Compute Backends (Base, Python, NumPy)
 │   ├── nn/                   # Module, Parameter, Linear, Sequential, Activations, Losses
-│   ├── optim/                # [Sprint 4 Planned] SGD (Momentum), Adam, AdamW
+│   ├── optim/                # First-Order Optimizers: SGD (Momentum, Nesterov), Adam, AdamW
 │   ├── runtime/              # [Sprint 5 Planned] MobileTrainer, Safe Checkpoint, Battery/Thermal Guard
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
-├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul Demos
-└── tests/                    # 148 Unit, Backend, Autograd, NN, Gradcheck and Package Identity Test Suites
+├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training Demos
+└── tests/                    # 186 Unit, Backend, Autograd, NN, Optim, Training, Gradcheck Test Suites
 ```
 
 ---
@@ -198,7 +210,7 @@ termux-train/
 - [x] **Sprint 3.7**: Cross-Backend Auto-Conversion & Matmul Contract Validation (`SCRUM-339` ~ `SCRUM-342`)
 - [x] **Sprint 3.8**: Initial 1D~3D Matmul Core Suite & Autograd Hardening (`SCRUM-343` ~ `SCRUM-350`)
 - [x] **Sprint 3.9**: Complete 1D~3D Matmul Rank Matrix, 9 Forward/Backward Combinations & Linear 1D~3D Support (`SCRUM-351`)
-- [ ] **Sprint 4**: Optimizers (`SGD`, `Adam`, `AdamW`) & XOR Convergence MVP (`SCRUM-296` ~ `SCRUM-300`)
+- [x] **Sprint 4**: Optimizers (`SGD`, `Adam`, `AdamW`) & XOR Convergence MVP (`SCRUM-296` ~ `SCRUM-300`)
 - [ ] **Sprint 5**: Mobile Training Runtime & Thermal/Battery Guard (`SCRUM-301` ~ `SCRUM-307`)
 - [ ] **Sprint 6**: On-Device LoRA Adapter (`SCRUM-308` ~ `SCRUM-312`)
 - [ ] **Sprint 7**: Tiny Transformer & CharLM Toy Trainer (General 4D ND Matmul & Multi-Head Attention) (`SCRUM-313` ~ `SCRUM-319`)
