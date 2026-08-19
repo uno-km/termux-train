@@ -68,6 +68,10 @@ class SGD(Optimizer):
 
     def _validate_state_entry(self, index: int, param: Parameter, state_entry: Dict[str, Any]) -> Dict[str, Any]:
         """Validates and restores SGD parameter state entry."""
+        if self.defaults.get("momentum", 0.0) > 0.0:
+            if "momentum_buffer" not in state_entry:
+                raise ValueError(f"State entry for parameter {index} missing 'momentum_buffer'")
+
         restored = {}
         if "momentum_buffer" in state_entry:
             buf_raw = state_entry["momentum_buffer"]
@@ -83,13 +87,15 @@ class SGD(Optimizer):
         return restored
 
     def step(self) -> None:
-        """Performs a single optimization step."""
+        """Performs a single optimization step using a two-phase transactional commit (Policy B)."""
         lr = self.defaults["lr"]
         momentum = self.defaults["momentum"]
         dampening = self.defaults["dampening"]
         weight_decay = self.defaults["weight_decay"]
         nesterov = self.defaults["nesterov"]
 
+        # Phase 1: Validation and candidate calculation
+        candidates = []
         for idx, p in enumerate(self.params):
             if not self._validate_param_and_grad(idx, p):
                 continue
@@ -109,11 +115,12 @@ class SGD(Optimizer):
                 self._assert_all_finite(p, grad_data, f"weight decayed gradient for parameter {idx}")
 
             # 2. Momentum
+            new_state = None
             if momentum != 0.0:
                 if idx not in self.state:
                     # First step: v_1 = g_1 (no dampening on step 1)
                     buf = self._clone_backend_data(p, grad_data)
-                    self.state[idx] = {"momentum_buffer": buf}
+                    new_state = {"momentum_buffer": buf}
                 else:
                     buf = self.state[idx]["momentum_buffer"]
                     self._assert_all_finite(p, buf, f"previous momentum_buffer for parameter {idx}")
@@ -122,7 +129,7 @@ class SGD(Optimizer):
                     dampened_g = p.backend.mul(grad_data, 1.0 - dampening)
                     buf = p.backend.add(p.backend.mul(buf, momentum), dampened_g)
                     self._assert_all_finite(p, buf, f"new momentum_buffer for parameter {idx}")
-                    self.state[idx]["momentum_buffer"] = buf
+                    new_state = {"momentum_buffer": buf}
 
                 if nesterov:
                     # update_t = g_t + mu * v_t
@@ -139,5 +146,10 @@ class SGD(Optimizer):
             new_param_data = p.backend.sub(p._data, step_delta)
             self._assert_all_finite(p, new_param_data, f"new parameter data for parameter {idx}")
 
-            # Apply parameter update
-            p._data = new_param_data
+            candidates.append((idx, p, new_param_data, new_state))
+
+        # Phase 2: Atomic commit across all parameters and states
+        for idx, p, new_data, new_state in candidates:
+            p._data = new_data
+            if new_state is not None:
+                self.state[idx] = new_state

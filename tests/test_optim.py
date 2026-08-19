@@ -457,3 +457,36 @@ def test_optimizer_repr(active_backend):
     assert "AdamW" in repr(opt_adamw)
     assert "weight_decay=0.01" in repr(opt_adamw)
     assert "params=1" in repr(opt_adamw)
+
+
+def test_sgd_strict_momentum_schema_rejection(active_backend):
+    p = Parameter([1.0, 2.0], requires_grad=True)
+    opt = SGD([p], lr=0.01, momentum=0.9)
+
+    # When momentum > 0, state entry without momentum_buffer must be rejected
+    with pytest.raises(ValueError, match="missing 'momentum_buffer'"):
+        opt.load_state_dict({
+            "class": "SGD",
+            "param_count": 1,
+            "defaults": {"lr": 0.01, "momentum": 0.9, "dampening": 0.0, "weight_decay": 0.0, "nesterov": False},
+            "state": {0: {}}
+        })
+
+
+@pytest.mark.parametrize("OptimizerClass", [SGD, Adam, AdamW])
+def test_optimizer_full_step_transactional_atomicity_policy_b(OptimizerClass, active_backend):
+    p1 = Parameter([1.0, 2.0], requires_grad=True)
+    p2 = Parameter([3.0, 4.0], requires_grad=True)
+    opt = OptimizerClass([p1, p2], lr=0.1)
+
+    # p1 has valid grad, p2 has NaN grad
+    p1.grad = Tensor([0.5, 0.5])
+    p2.grad = Tensor([float("nan"), 0.5])
+
+    with pytest.raises(FloatingPointError, match="non-finite value"):
+        opt.step()
+
+    # Policy B Guarantee: Full step transaction aborted, p1 must be 100% UNTOUCHED
+    assert p1.tolist() == [1.0, 2.0]
+    assert p2.tolist() == [3.0, 4.0]
+    assert len(opt.state) == 0

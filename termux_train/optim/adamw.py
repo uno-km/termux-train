@@ -109,12 +109,14 @@ class AdamW(Optimizer):
         }
 
     def step(self) -> None:
-        """Performs a single optimization step with decoupled weight decay."""
+        """Performs a single optimization step using a two-phase transactional commit (Policy B)."""
         lr = self.defaults["lr"]
         beta1, beta2 = self.defaults["betas"]
         eps = self.defaults["eps"]
         weight_decay = self.defaults["weight_decay"]
 
+        # Phase 1: Validation and candidate calculation
+        candidates = []
         for idx, p in enumerate(self.params):
             if not self._validate_param_and_grad(idx, p):
                 continue
@@ -136,39 +138,39 @@ class AdamW(Optimizer):
 
             # 3. State Initialization
             if idx not in self.state:
-                self.state[idx] = {
-                    "step": 0,
-                    "exp_avg": p.backend.zeros(p.shape),
-                    "exp_avg_sq": p.backend.zeros(p.shape),
-                }
+                prev_step = 0
+                prev_exp_avg = p.backend.zeros(p.shape)
+                prev_exp_avg_sq = p.backend.zeros(p.shape)
+            else:
+                prev_state = self.state[idx]
+                prev_step = prev_state["step"]
+                prev_exp_avg = prev_state["exp_avg"]
+                prev_exp_avg_sq = prev_state["exp_avg_sq"]
+                self._assert_all_finite(p, prev_exp_avg, f"previous exp_avg for parameter {idx}")
+                self._assert_all_finite(p, prev_exp_avg_sq, f"previous exp_avg_sq for parameter {idx}")
 
-            state = self.state[idx]
-            self._assert_all_finite(p, state["exp_avg"], f"previous exp_avg for parameter {idx}")
-            self._assert_all_finite(p, state["exp_avg_sq"], f"previous exp_avg_sq for parameter {idx}")
-
-            state["step"] += 1
-            step_count = state["step"]
+            new_step_count = prev_step + 1
 
             # 4. Update biased 1st and 2nd moment estimates
-            state["exp_avg"] = p.backend.add(
-                p.backend.mul(state["exp_avg"], beta1),
+            new_exp_avg = p.backend.add(
+                p.backend.mul(prev_exp_avg, beta1),
                 p.backend.mul(grad_data, 1.0 - beta1)
             )
-            self._assert_all_finite(p, state["exp_avg"], f"new exp_avg for parameter {idx}")
+            self._assert_all_finite(p, new_exp_avg, f"new exp_avg for parameter {idx}")
 
             grad_sq = p.backend.mul(grad_data, grad_data)
-            state["exp_avg_sq"] = p.backend.add(
-                p.backend.mul(state["exp_avg_sq"], beta2),
+            new_exp_avg_sq = p.backend.add(
+                p.backend.mul(prev_exp_avg_sq, beta2),
                 p.backend.mul(grad_sq, 1.0 - beta2)
             )
-            self._assert_all_finite(p, state["exp_avg_sq"], f"new exp_avg_sq for parameter {idx}")
+            self._assert_all_finite(p, new_exp_avg_sq, f"new exp_avg_sq for parameter {idx}")
 
             # 5. Bias Corrections
-            bias_correction1 = 1.0 - (beta1 ** step_count)
-            bias_correction2 = 1.0 - (beta2 ** step_count)
+            bias_correction1 = 1.0 - (beta1 ** new_step_count)
+            bias_correction2 = 1.0 - (beta2 ** new_step_count)
 
-            m_hat = p.backend.div(state["exp_avg"], bias_correction1)
-            v_hat = p.backend.div(state["exp_avg_sq"], bias_correction2)
+            m_hat = p.backend.div(new_exp_avg, bias_correction1)
+            v_hat = p.backend.div(new_exp_avg_sq, bias_correction2)
 
             # 6. Compute denominator: sqrt(v_hat) + eps
             sqrt_v = p.backend.pow(v_hat, 0.5)
@@ -182,5 +184,14 @@ class AdamW(Optimizer):
             new_param_data = p.backend.sub(decayed_param_data, step_update)
             self._assert_all_finite(p, new_param_data, f"new parameter data for parameter {idx}")
 
-            # Apply parameter update only after all checks pass
-            p._data = new_param_data
+            new_state = {
+                "step": new_step_count,
+                "exp_avg": new_exp_avg,
+                "exp_avg_sq": new_exp_avg_sq,
+            }
+            candidates.append((idx, p, new_param_data, new_state))
+
+        # Phase 2: Atomic commit across all parameters and states
+        for idx, p, new_data, new_state in candidates:
+            p._data = new_data
+            self.state[idx] = new_state

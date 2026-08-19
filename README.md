@@ -194,7 +194,7 @@ termux-train/
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
 ├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training Demos
-└── tests/                    # 200 Unit, Backend, Autograd, NN, Optim, Training, Gradcheck Test Suites
+└── tests/                    # 208 Unit, Backend, Autograd, NN, Optim, Training, Gradcheck Test Suites
 ```
 
 ---
