@@ -61,7 +61,7 @@ def generate_tree(path: Path, prefix="") -> str:
                 lines.append(child_tree)
     return "\n".join(lines)
 
-CURRENT_STAGE = "Sprint 6 Host Complete (On-Device LoRA Adapter & Fine-Tuning, Device Validation Pending)"
+CURRENT_STAGE = "Sprint 7 Host In Progress (Tiny Transformer & CharLM, Device Validation Pending)"
 
 def main():
     root = Path(__file__).resolve().parent.parent

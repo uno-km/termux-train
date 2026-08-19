@@ -252,16 +252,17 @@ nn.merge_lora_adapters(fresh_student)
 ```
 termux-train/
 ├── termux_train/
-│   ├── __init__.py           # Tensor, nn, optim, runtime, utils exports
+│   ├── __init__.py           # Tensor, nn, optim, runtime, tokenization, utils exports
 │   ├── tensor.py             # Pure-Python Tensor Data Model & DAG Graph
 │   ├── backend/              # Pluggable Compute Backends (Base, Python, NumPy)
 │   ├── nn/                   # Module, Parameter, Linear, LoRALinear, Sequential, Activations, Losses
 │   ├── optim/                # First-Order Optimizers: SGD (Momentum, Nesterov), Adam, AdamW
 │   ├── runtime/              # MobileTrainer, Safe Atomic Checkpoint Save/Load & Recovery Engine
+│   ├── tokenization/         # Pure-Python Lightweight Tokenizers (Base, Char, Byte, Word)
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
 ├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime & LoRA Demos
-└── tests/                    # Comprehensive Tensor, Backend, Autograd, NN, Optimizer, Runtime, LoRA, Checkpoint, and Training Test Suites
+└── tests/                    # Comprehensive Tensor, Backend, Autograd, NN, Optimizer, Runtime, LoRA, Tokenization Test Suites
 ```
 
 ---

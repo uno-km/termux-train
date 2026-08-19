@@ -12,6 +12,7 @@ from .tensor import Tensor, tensor, zeros, ones, zeros_like, ones_like, randn
 from . import nn
 from . import optim
 from . import runtime
+from . import tokenization
 from .utils.termux_env import is_termux, is_android, get_device_info
 
 __all__ = [
@@ -24,10 +25,11 @@ __all__ = [
     "ones_like",
     "randn",
     
-    # NN, Optim & Runtime Submodules
+    # NN, Optim, Runtime & Tokenization Submodules
     "nn",
     "optim",
     "runtime",
+    "tokenization",
     
     # Backend
     "get_backend",
