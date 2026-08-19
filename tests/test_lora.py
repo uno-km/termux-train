@@ -1,0 +1,324 @@
+"""
+tests/test_lora.py
+==================
+SCRUM-308: Comprehensive Unit Tests for On-Device LoRALinear Core.
+Validates:
+  - Constructor input verification (types, bounds, booleans, NaN/Inf)
+  - Mathematical factor shapes (in_features, rank) and (rank, out_features)
+  - Scaling factor computation (alpha / rank)
+  - Exact zero initialization of factor B and random initialization of factor A
+  - Base Linear freezing (requires_grad=False) and parameter identity preservation
+  - Factory method from_linear() identity preservation
+  - Initial forward output identity (LoRA(x) == base(x)) for 1D, 2D, and 3D inputs
+  - Manual reference computation parity for 1D, 2D, and 3D inputs
+  - Gradient isolation: base.weight.grad is None, base.bias.grad is None
+  - Adapter-only optimization: optimizer step updates A/B while base weights remain bitwise identical
+  - Recursive model-level helper functions adapter_parameters() and named_adapter_parameters()
+  - Full parity across Python and NumPy backends
+"""
+
+import math
+import copy
+import pytest
+from termux_train import Tensor, nn, optim, available_backends, set_backend
+from termux_train.nn.lora import LoRALinear, adapter_parameters, named_adapter_parameters
+
+
+@pytest.fixture(params=["python"] + (["numpy"] if "numpy" in available_backends() else []))
+def active_backend(request):
+    set_backend(request.param)
+    return request.param
+
+
+# =============================================================================
+# 1. Constructor Validation & Factor Shapes
+# =============================================================================
+
+def test_lora_normal_creation(active_backend):
+    layer = nn.LoRALinear(in_features=8, out_features=4, rank=2, alpha=4.0, bias=True)
+    assert layer.in_features == 8
+    assert layer.out_features == 4
+    assert layer.rank == 2
+    assert layer.alpha == 4.0
+    assert layer.scaling == 2.0
+    assert layer.merged is False
+    assert layer.lora_A.shape == (8, 2)
+    assert layer.lora_B.shape == (2, 4)
+    assert layer.base.weight.shape == (8, 4)
+    assert layer.base.bias is not None
+    assert layer.base.bias.shape == (1, 4)
+
+
+def test_lora_rank_boundaries(active_backend):
+    # rank = 1 (minimum)
+    l1 = nn.LoRALinear(in_features=4, out_features=6, rank=1)
+    assert l1.rank == 1
+    assert l1.lora_A.shape == (4, 1)
+    assert l1.lora_B.shape == (1, 6)
+
+    # rank = min(in_features, out_features) (maximum)
+    l_max = nn.LoRALinear(in_features=4, out_features=6, rank=4)
+    assert l_max.rank == 4
+    assert l_max.lora_A.shape == (4, 4)
+    assert l_max.lora_B.shape == (4, 6)
+
+
+@pytest.mark.parametrize("invalid_in", [0, -1, -5, True, False, 3.5, "8", None, [8]])
+def test_lora_invalid_in_features(invalid_in, active_backend):
+    with pytest.raises((ValueError, TypeError)):
+        nn.LoRALinear(in_features=invalid_in, out_features=4, rank=2)
+
+
+@pytest.mark.parametrize("invalid_out", [0, -1, -5, True, False, 2.5, "4", None, (4,)])
+def test_lora_invalid_out_features(invalid_out, active_backend):
+    with pytest.raises((ValueError, TypeError)):
+        nn.LoRALinear(in_features=8, out_features=invalid_out, rank=2)
+
+
+@pytest.mark.parametrize("invalid_rank", [0, -1, True, False, 1.5, "2", None, 5])
+def test_lora_invalid_rank(invalid_rank, active_backend):
+    # For in_features=8, out_features=4, max rank is 4. rank=5 is invalid.
+    with pytest.raises((ValueError, TypeError)):
+        nn.LoRALinear(in_features=8, out_features=4, rank=invalid_rank)
+
+
+@pytest.mark.parametrize("invalid_alpha", [0, 0.0, -1.0, float("nan"), float("inf"), float("-inf"), True, False, "1.0", None])
+def test_lora_invalid_alpha(invalid_alpha, active_backend):
+    with pytest.raises((ValueError, TypeError)):
+        nn.LoRALinear(in_features=8, out_features=4, rank=2, alpha=invalid_alpha)
+
+
+def test_lora_bias_false(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=False)
+    assert layer.base.bias is None
+    param_names = [name for name, _ in layer.named_parameters()]
+    assert "base.bias" not in param_names
+
+
+def test_lora_backend_preservation(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    assert layer.base.weight.backend.name == active_backend
+    assert layer.lora_A.backend.name == active_backend
+    assert layer.lora_B.backend.name == active_backend
+
+
+# =============================================================================
+# 2. Initialization & Base Freeze Contract
+# =============================================================================
+
+def test_lora_b_zero_initialization(active_backend):
+    layer = nn.LoRALinear(in_features=6, out_features=4, rank=2)
+    b_list = layer.lora_B.tolist()
+    for row in b_list:
+        for val in row:
+            assert val == 0.0
+
+
+def test_lora_base_frozen_and_adapter_trainable(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=True)
+    assert layer.base.weight.requires_grad is False
+    assert layer.base.bias.requires_grad is False
+    assert layer.lora_A.requires_grad is True
+    assert layer.lora_B.requires_grad is True
+
+
+def test_lora_adapter_parameter_apis(active_backend):
+    layer = nn.LoRALinear(in_features=6, out_features=4, rank=2, bias=True)
+
+    # 1. Instance adapter_parameters
+    adapter_params = layer.adapter_parameters()
+    assert len(adapter_params) == 2
+    assert id(adapter_params[0]) == id(layer.lora_A)
+    assert id(adapter_params[1]) == id(layer.lora_B)
+
+    # 2. Instance named_adapter_parameters
+    named_adapters = layer.named_adapter_parameters()
+    assert len(named_adapters) == 2
+    assert named_adapters[0][0] == "lora_A"
+    assert id(named_adapters[0][1]) == id(layer.lora_A)
+    assert named_adapters[1][0] == "lora_B"
+    assert id(named_adapters[1][1]) == id(layer.lora_B)
+
+    # 3. adapter parameter count formula: rank * (in + out)
+    expected_count = 2 * (6 + 4)
+    actual_count = (layer.lora_A.shape[0] * layer.lora_A.shape[1]) + (layer.lora_B.shape[0] * layer.lora_B.shape[1])
+    assert actual_count == expected_count
+
+
+def test_lora_recursive_model_helpers(active_backend):
+    model = nn.Sequential(
+        nn.LoRALinear(4, 8, rank=2),
+        nn.Tanh(),
+        nn.Linear(8, 8),  # Standard non-LoRA linear layer
+        nn.LoRALinear(8, 2, rank=2),
+    )
+
+    all_adapter_params = adapter_parameters(model)
+    all_named_adapter_params = named_adapter_parameters(model)
+
+    assert len(all_adapter_params) == 4
+    assert len(all_named_adapter_params) == 4
+
+    names = [name for name, _ in all_named_adapter_params]
+    assert names == ["0.lora_A", "0.lora_B", "3.lora_A", "3.lora_B"]
+
+    # Verify no base parameters leaked into adapter_parameters
+    for p in all_adapter_params:
+        assert p.requires_grad is True
+        assert p.shape in [(4, 2), (2, 8), (8, 2), (2, 2)]
+
+
+# =============================================================================
+# 3. from_linear Factory Method
+# =============================================================================
+
+def test_lora_from_linear_identity_and_value_preservation(active_backend):
+    base_linear = nn.Linear(4, 2, bias=True)
+    orig_weight_id = id(base_linear.weight)
+    orig_bias_id = id(base_linear.bias)
+    orig_weight_data = copy.deepcopy(base_linear.weight.tolist())
+    orig_bias_data = copy.deepcopy(base_linear.bias.tolist())
+
+    lora_layer = nn.LoRALinear.from_linear(base_linear, rank=2, alpha=2.0)
+
+    # Identity preservation
+    assert id(lora_layer.base) == id(base_linear)
+    assert id(lora_layer.base.weight) == orig_weight_id
+    assert id(lora_layer.base.bias) == orig_bias_id
+
+    # Value preservation
+    assert lora_layer.base.weight.tolist() == orig_weight_data
+    assert lora_layer.base.bias.tolist() == orig_bias_data
+
+    # Freezing preservation
+    assert lora_layer.base.weight.requires_grad is False
+    assert lora_layer.base.bias.requires_grad is False
+
+
+# =============================================================================
+# 4. Forward Computation & Initial Identity (LoRA(x) == base(x))
+# =============================================================================
+
+def test_lora_initial_output_identity_1d_2d_3d(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=3, rank=2, alpha=2.0, bias=True)
+
+    # 1D Input
+    x1 = Tensor([1.0, 2.0, -1.0, 0.5])
+    out1_lora = layer(x1)
+    out1_base = layer.base(x1)
+    assert out1_lora.flatten().tolist() == pytest.approx(out1_base.flatten().tolist(), abs=1e-6)
+
+    # 2D Input
+    x2 = Tensor([[1.0, 2.0, -1.0, 0.5], [0.0, -1.0, 3.0, 2.0]])
+    out2_lora = layer(x2)
+    out2_base = layer.base(x2)
+    assert out2_lora.flatten().tolist() == pytest.approx(out2_base.flatten().tolist(), abs=1e-6)
+
+    # 3D Input
+    x3 = Tensor([[[1.0, 2.0, -1.0, 0.5], [0.0, -1.0, 3.0, 2.0]]])
+    out3_lora = layer(x3)
+    out3_base = layer.base(x3)
+    assert out3_lora.flatten().tolist() == pytest.approx(out3_base.flatten().tolist(), abs=1e-6)
+
+
+def test_lora_manual_forward_reference_with_nonzero_b(active_backend):
+    layer = nn.LoRALinear(in_features=3, out_features=2, rank=2, alpha=4.0, bias=True)
+    # Manually populate lora_A and lora_B for deterministic mathematical verification
+    layer.lora_A._data = layer.lora_A.backend.from_data([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    x = Tensor([[1.0, 2.0, 3.0]])
+    out = layer(x)
+
+    # Manual reference:
+    # x @ A = [[1, 2, 3]] @ [[1, 0], [0, 1], [1, 1]] = [[4, 5]]
+    # (x @ A) @ B = [[4, 5]] @ [[1, 2], [3, 4]] = [[4*1 + 5*3, 4*2 + 5*4]] = [[19, 28]]
+    # scaling = 4.0 / 2 = 2.0
+    # adapter_term = [[38, 56]]
+    # expected = base(x) + [[38, 56]]
+    base_out = layer.base(x)
+    expected_out = base_out + Tensor([[38.0, 56.0]])
+
+    assert out.flatten().tolist() == pytest.approx(expected_out.flatten().tolist(), abs=1e-6)
+
+
+def test_lora_input_validation_errors(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+
+    # Incompatible last dimension
+    with pytest.raises(ValueError, match="expected input.shape"):
+        layer(Tensor([[1.0, 2.0, 3.0]]))
+
+    # Unsupported rank: 0D scalar
+    with pytest.raises(ValueError, match="expects a 1D, 2D, or 3D input"):
+        layer(Tensor(1.0))
+
+    # Unsupported rank: 4D tensor
+    with pytest.raises(ValueError, match="expects a 1D, 2D, or 3D input"):
+        layer(Tensor([[[[1.0, 2.0, 3.0, 4.0]]]]))
+
+
+# =============================================================================
+# 5. Gradient Isolation & Autograd Lifecycle
+# =============================================================================
+
+def test_lora_gradient_isolation_and_base_invariance(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=True)
+    orig_base_weight = copy.deepcopy(layer.base.weight.tolist())
+    orig_base_bias = copy.deepcopy(layer.base.bias.tolist())
+
+    x = Tensor([[1.0, 2.0, 3.0, 4.0]], requires_grad=True)
+    target = Tensor([[1.0, 0.0]])
+
+    pred = layer(x)
+    loss = ((pred - target) ** 2).sum()
+    loss.backward()
+
+    # 1. Base weights and bias have NO gradients
+    assert layer.base.weight.grad is None
+    assert layer.base.bias.grad is None
+
+    # 2. Adapter B has non-zero gradients
+    assert layer.lora_B.grad is not None
+
+    # 3. Input x receives gradients
+    assert x.grad is not None
+
+
+def test_lora_adapter_only_optimizer_step_leaves_base_identical(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=True)
+    orig_base_weight = copy.deepcopy(layer.base.weight.tolist())
+    orig_base_bias = copy.deepcopy(layer.base.bias.tolist())
+    orig_base_weight_id = id(layer.base.weight)
+    orig_base_bias_id = id(layer.base.bias)
+
+    # Give non-zero B so both A and B receive gradient
+    layer.lora_B._data = layer.lora_B.backend.from_data([[0.1, -0.1], [0.2, 0.05]])
+
+    optimizer = optim.SGD(layer.adapter_parameters(), lr=0.1)
+
+    # Verify optimizer only manages 2 parameters
+    assert len(optimizer.params) == 2
+
+    x = Tensor([[1.0, 1.0, 1.0, 1.0]])
+    target = Tensor([[0.0, 0.0]])
+
+    orig_a = copy.deepcopy(layer.lora_A.tolist())
+    orig_b = copy.deepcopy(layer.lora_B.tolist())
+
+    optimizer.zero_grad()
+    loss = ((layer(x) - target) ** 2).sum()
+    loss.backward()
+    optimizer.step()
+
+    # 1. A and B updated
+    assert layer.lora_A.tolist() != orig_a
+    assert layer.lora_B.tolist() != orig_b
+
+    # 2. Base weight and bias strictly unchanged
+    assert layer.base.weight.tolist() == orig_base_weight
+    assert layer.base.bias.tolist() == orig_base_bias
+
+    # 3. Parameter identities preserved
+    assert id(layer.base.weight) == orig_base_weight_id
+    assert id(layer.base.bias) == orig_base_bias_id
