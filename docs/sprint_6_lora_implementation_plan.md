@@ -197,7 +197,7 @@ Implemented & Hardened:
 
 ## Phase 5: SCRUM-312 - MobileTrainer and Toy Fine-tuning
 - **Status**: Host Complete
-- **Commit Message**: `Add LoRA mobile fine-tuning lifecycle`
+- **Commit**: `dc9b918` (`Add LoRA mobile fine-tuning lifecycle`)
 - **Host Tests**: `461 passed, 1 warning`
 - **Example Verification**: `PASS` (Python & NumPy Backends)
 - **Android Termux Gate**: `PENDING`
