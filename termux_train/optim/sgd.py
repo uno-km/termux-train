@@ -2,7 +2,8 @@
 termux_train.optim.sgd
 ======================
 Stochastic Gradient Descent (SGD) with optional Momentum, Dampening, Weight Decay, and Nesterov acceleration.
-Fully hardened with real-number type validation, fail-fast finite checks, and atomic state schemas.
+Fully hardened with real-number type validation, fail-fast finite checks, strict state schema enforcement,
+and two-phase full-step transactional commits (Policy B).
 """
 
 import copy
@@ -66,25 +67,64 @@ class SGD(Optimizer):
             nesterov=nesterov,
         )
 
-    def _validate_state_entry(self, index: int, param: Parameter, state_entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Validates and restores SGD parameter state entry."""
-        if self.defaults.get("momentum", 0.0) > 0.0:
-            if "momentum_buffer" not in state_entry:
-                raise ValueError(f"State entry for parameter {index} missing 'momentum_buffer'")
+    def _validate_state_entry(
+        self,
+        index: int,
+        param: Parameter,
+        state_entry: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Validates and restores SGD parameter state schema strictly."""
+        allowed_keys = {"momentum_buffer"}
+        unexpected_keys = set(state_entry) - allowed_keys
 
-        restored = {}
-        if "momentum_buffer" in state_entry:
-            buf_raw = state_entry["momentum_buffer"]
-            if not isinstance(buf_raw, list):
-                raise TypeError(f"momentum_buffer for parameter {index} must be a list structure")
-            buf_data = param.backend.from_data(copy.deepcopy(buf_raw))
-            if tuple(param.backend.get_shape(buf_data)) != tuple(param.shape):
-                raise RuntimeError(
-                    f"Shape mismatch for momentum_buffer parameter {index}: expected {param.shape}, got {param.backend.get_shape(buf_data)}"
+        if unexpected_keys:
+            raise ValueError(
+                f"Unexpected SGD state fields for parameter {index}: {sorted(unexpected_keys)}"
+            )
+
+        momentum = self.defaults["momentum"]
+
+        if momentum > 0.0:
+            if "momentum_buffer" not in state_entry:
+                raise ValueError(
+                    f"State entry for parameter {index} missing 'momentum_buffer'"
                 )
-            self._assert_all_finite(param, buf_data, f"momentum_buffer for parameter {index}")
-            restored["momentum_buffer"] = buf_data
-        return restored
+        elif "momentum_buffer" in state_entry:
+            raise ValueError(
+                f"State entry for parameter {index} contains 'momentum_buffer' while momentum is disabled"
+            )
+
+        if "momentum_buffer" not in state_entry:
+            return {}
+
+        buffer_raw = state_entry["momentum_buffer"]
+
+        if not isinstance(buffer_raw, list):
+            raise TypeError(
+                f"momentum_buffer for parameter {index} must be a list structure"
+            )
+
+        buffer_data = param.backend.from_data(
+            copy.deepcopy(buffer_raw)
+        )
+        buffer_shape = tuple(
+            param.backend.get_shape(buffer_data)
+        )
+
+        if buffer_shape != tuple(param.shape):
+            raise RuntimeError(
+                f"Shape mismatch for momentum_buffer parameter {index}: expected {param.shape}, got {buffer_shape}"
+            )
+
+        self._assert_all_finite(
+            param,
+            buffer_data,
+            f"momentum_buffer for parameter {index}",
+        )
+
+        return {
+            "momentum_buffer": buffer_data,
+        }
 
     def step(self) -> None:
         """Performs a single optimization step using a two-phase transactional commit (Policy B)."""
@@ -94,62 +134,112 @@ class SGD(Optimizer):
         weight_decay = self.defaults["weight_decay"]
         nesterov = self.defaults["nesterov"]
 
-        # Phase 1: Validation and candidate calculation
-        candidates = []
-        for idx, p in enumerate(self.params):
-            if not self._validate_param_and_grad(idx, p):
+        update_mask = self._validate_all_params_and_grads()
+        pending_state = self._clone_state()
+        pending_param_data = {}
+
+        for index, param in enumerate(self.params):
+            if not update_mask[index]:
                 continue
 
-            # Fail-fast check on initial parameter & gradient
-            self._assert_all_finite(p, p._data, f"parameter {idx}")
-            self._assert_all_finite(p, p.grad._data, f"gradient for parameter {idx}")
+            grad_data = param.grad._data
 
-            grad_data = p.grad._data
-
-            # 1. L2 Weight Decay (applied to gradient)
             if weight_decay != 0.0:
-                grad_data = p.backend.add(
+                grad_data = param.backend.add(
                     grad_data,
-                    p.backend.mul(p._data, weight_decay)
+                    param.backend.mul(
+                        param._data,
+                        weight_decay,
+                    ),
                 )
-                self._assert_all_finite(p, grad_data, f"weight decayed gradient for parameter {idx}")
 
-            # 2. Momentum
-            new_state = None
+                self._assert_all_finite(
+                    param,
+                    grad_data,
+                    f"weight decayed gradient for parameter {index}",
+                )
+
             if momentum != 0.0:
-                if idx not in self.state:
-                    # First step: v_1 = g_1 (no dampening on step 1)
-                    buf = self._clone_backend_data(p, grad_data)
-                    new_state = {"momentum_buffer": buf}
+                if index not in pending_state:
+                    buffer_data = self._clone_backend_data(
+                        param,
+                        grad_data,
+                    )
+                    pending_state[index] = {
+                        "momentum_buffer": buffer_data,
+                    }
                 else:
-                    buf = self.state[idx]["momentum_buffer"]
-                    self._assert_all_finite(p, buf, f"previous momentum_buffer for parameter {idx}")
+                    buffer_data = pending_state[index][
+                        "momentum_buffer"
+                    ]
 
-                    # v_t = mu * v_(t-1) + (1 - dampening) * g_t
-                    dampened_g = p.backend.mul(grad_data, 1.0 - dampening)
-                    buf = p.backend.add(p.backend.mul(buf, momentum), dampened_g)
-                    self._assert_all_finite(p, buf, f"new momentum_buffer for parameter {idx}")
-                    new_state = {"momentum_buffer": buf}
+                    self._assert_all_finite(
+                        param,
+                        buffer_data,
+                        f"previous momentum_buffer for parameter {index}",
+                    )
+
+                    dampened_gradient = param.backend.mul(
+                        grad_data,
+                        1.0 - dampening,
+                    )
+                    buffer_data = param.backend.add(
+                        param.backend.mul(
+                            buffer_data,
+                            momentum,
+                        ),
+                        dampened_gradient,
+                    )
+
+                    self._assert_all_finite(
+                        param,
+                        buffer_data,
+                        f"new momentum_buffer for parameter {index}",
+                    )
+
+                    pending_state[index][
+                        "momentum_buffer"
+                    ] = buffer_data
 
                 if nesterov:
-                    # update_t = g_t + mu * v_t
-                    update_data = p.backend.add(grad_data, p.backend.mul(buf, momentum))
+                    update_data = param.backend.add(
+                        grad_data,
+                        param.backend.mul(
+                            buffer_data,
+                            momentum,
+                        ),
+                    )
                 else:
-                    update_data = buf
+                    update_data = buffer_data
             else:
                 update_data = grad_data
 
-            self._assert_all_finite(p, update_data, f"update delta for parameter {idx}")
+            self._assert_all_finite(
+                param,
+                update_data,
+                f"update for parameter {index}",
+            )
 
-            # 3. Parameter Update: theta_(t+1) = theta_t - lr * update_t
-            step_delta = p.backend.mul(update_data, lr)
-            new_param_data = p.backend.sub(p._data, step_delta)
-            self._assert_all_finite(p, new_param_data, f"new parameter data for parameter {idx}")
+            step_delta = param.backend.mul(
+                update_data,
+                lr,
+            )
+            new_param_data = param.backend.sub(
+                param._data,
+                step_delta,
+            )
 
-            candidates.append((idx, p, new_param_data, new_state))
+            self._assert_all_finite(
+                param,
+                new_param_data,
+                f"new parameter data for parameter {index}",
+            )
 
-        # Phase 2: Atomic commit across all parameters and states
-        for idx, p, new_data, new_state in candidates:
-            p._data = new_data
-            if new_state is not None:
-                self.state[idx] = new_state
+            pending_param_data[index] = new_param_data
+
+        self._commit_step(
+            pending_param_data,
+            pending_state,
+        )
+
+        return None

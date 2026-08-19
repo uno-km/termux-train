@@ -459,34 +459,146 @@ def test_optimizer_repr(active_backend):
     assert "params=1" in repr(opt_adamw)
 
 
-def test_sgd_strict_momentum_schema_rejection(active_backend):
-    p = Parameter([1.0, 2.0], requires_grad=True)
-    opt = SGD([p], lr=0.01, momentum=0.9)
+def test_sgd_momentum_state_entry_requires_buffer(active_backend):
+    param = Parameter([1.0], requires_grad=True)
+    optimizer = SGD([param], lr=0.1, momentum=0.9)
 
-    # When momentum > 0, state entry without momentum_buffer must be rejected
+    invalid_state = optimizer.state_dict()
+    invalid_state["state"] = {0: {}}
+
     with pytest.raises(ValueError, match="missing 'momentum_buffer'"):
-        opt.load_state_dict({
-            "class": "SGD",
-            "param_count": 1,
-            "defaults": {"lr": 0.01, "momentum": 0.9, "dampening": 0.0, "weight_decay": 0.0, "nesterov": False},
-            "state": {0: {}}
-        })
+        optimizer.load_state_dict(invalid_state)
 
 
-@pytest.mark.parametrize("OptimizerClass", [SGD, Adam, AdamW])
-def test_optimizer_full_step_transactional_atomicity_policy_b(OptimizerClass, active_backend):
-    p1 = Parameter([1.0, 2.0], requires_grad=True)
-    p2 = Parameter([3.0, 4.0], requires_grad=True)
-    opt = OptimizerClass([p1, p2], lr=0.1)
+def test_sgd_unstepped_parameter_may_have_no_state_entry(active_backend):
+    param = Parameter([1.0], requires_grad=True)
+    optimizer = SGD([param], lr=0.1, momentum=0.9)
 
-    # p1 has valid grad, p2 has NaN grad
-    p1.grad = Tensor([0.5, 0.5])
-    p2.grad = Tensor([float("nan"), 0.5])
+    empty_state = optimizer.state_dict()
+    empty_state["state"] = {}
+
+    optimizer.load_state_dict(empty_state)
+    assert optimizer.state == {}
+
+
+def test_sgd_momentum_disabled_rejects_buffer(active_backend):
+    param = Parameter([1.0], requires_grad=True)
+    optimizer = SGD([param], lr=0.1, momentum=0.0)
+
+    invalid_state = optimizer.state_dict()
+    invalid_state["state"] = {0: {"momentum_buffer": [0.5]}}
+
+    with pytest.raises(ValueError, match="contains 'momentum_buffer' while momentum is disabled"):
+        optimizer.load_state_dict(invalid_state)
+
+
+def test_sgd_unexpected_state_fields_rejected(active_backend):
+    param = Parameter([1.0], requires_grad=True)
+    optimizer = SGD([param], lr=0.1, momentum=0.9)
+
+    invalid_state = optimizer.state_dict()
+    invalid_state["state"] = {0: {"momentum_buffer": [0.5], "extra_corrupted_key": 123}}
+
+    with pytest.raises(ValueError, match="Unexpected SGD state fields"):
+        optimizer.load_state_dict(invalid_state)
+
+
+# =============================================================================
+# 7. Full-Step Transactional Atomicity (Policy B) & Rollback Tests
+# =============================================================================
+
+def test_sgd_step_is_atomic_across_parameters(active_backend):
+    p0 = Parameter([1.0], requires_grad=True)
+    p1 = Parameter([2.0], requires_grad=True)
+
+    optimizer = SGD([p0, p1], lr=0.1, momentum=0.9)
+
+    p0.grad = Tensor([0.5], backend=p0.backend)
+    p1.grad = Tensor([float("nan")], backend=p1.backend)
+
+    before_p0 = p0.tolist()
+    before_p1 = p1.tolist()
+    before_state = optimizer.state_dict()
 
     with pytest.raises(FloatingPointError, match="non-finite value"):
-        opt.step()
+        optimizer.step()
 
-    # Policy B Guarantee: Full step transaction aborted, p1 must be 100% UNTOUCHED
-    assert p1.tolist() == [1.0, 2.0]
-    assert p2.tolist() == [3.0, 4.0]
-    assert len(opt.state) == 0
+    assert p0.tolist() == before_p0
+    assert p1.tolist() == before_p1
+    assert optimizer.state_dict() == before_state
+    assert p0.grad.tolist() == [0.5]
+    assert math.isnan(p1.grad.tolist()[0])
+
+
+def test_adam_step_is_atomic_across_parameters(active_backend):
+    p0 = Parameter([1.0], requires_grad=True)
+    p1 = Parameter([2.0], requires_grad=True)
+
+    optimizer = Adam([p0, p1], lr=0.1)
+
+    p0.grad = Tensor([0.5], backend=p0.backend)
+    p1.grad = Tensor([float("inf")], backend=p1.backend)
+
+    before_p0 = p0.tolist()
+    before_p1 = p1.tolist()
+    before_state = optimizer.state_dict()
+
+    with pytest.raises(FloatingPointError, match="non-finite value"):
+        optimizer.step()
+
+    assert p0.tolist() == before_p0
+    assert p1.tolist() == before_p1
+    assert optimizer.state_dict() == before_state
+    assert len(optimizer.state) == 0
+
+
+def test_adamw_step_is_atomic_across_parameters(active_backend):
+    p0 = Parameter([1.0], requires_grad=True)
+    p1 = Parameter([2.0], requires_grad=True)
+
+    optimizer = AdamW([p0, p1], lr=0.1, weight_decay=0.05)
+
+    # Step 1: Valid initial step
+    p0.grad = Tensor([0.5], backend=p0.backend)
+    p1.grad = Tensor([0.5], backend=p1.backend)
+    optimizer.step()
+
+    before_p0 = p0.tolist()
+    before_p1 = p1.tolist()
+    before_state = optimizer.state_dict()
+
+    # Corrupt p1's exp_avg_sq in state
+    optimizer.state[1]["exp_avg_sq"] = p1.backend.from_data([float("nan")])
+
+    # Step 2: Attempt step with valid grads, but corrupted state on p1
+    p0.grad = Tensor([0.5], backend=p0.backend)
+    p1.grad = Tensor([0.5], backend=p1.backend)
+
+    with pytest.raises(FloatingPointError, match="non-finite value"):
+        optimizer.step()
+
+    # Ensure p0 was not decayed or stepped
+    assert p0.tolist() == before_p0
+    assert p1.tolist() == before_p1
+
+
+def test_optimizer_calculation_overflow_rollback(active_backend):
+    if active_backend == "numpy":
+        p0 = Parameter([1.0], requires_grad=True)
+        # Using maximum float values to trigger overflow during calculation
+        p1 = Parameter([1e308], requires_grad=True)
+        optimizer = SGD([p0, p1], lr=10.0, weight_decay=1e300)
+
+        p0.grad = Tensor([0.1], backend=p0.backend)
+        p1.grad = Tensor([1e308], backend=p1.backend)
+
+        before_p0 = p0.tolist()
+        before_p1 = p1.tolist()
+        before_state = optimizer.state_dict()
+
+        with pytest.raises(FloatingPointError, match="non-finite value"):
+            optimizer.step()
+
+        assert p0.tolist() == before_p0
+        assert p1.tolist() == before_p1
+        assert optimizer.state_dict() == before_state

@@ -3,7 +3,7 @@ termux_train.optim.optimizer
 ============================
 Abstract Base Class for all termux-train first-order optimizers.
 Manages parameter references, validation, lifecycle, DAG-safety, fail-fast finite checks,
-and atomic state_dict serialization.
+transactional multi-parameter commits (Policy B), and atomic state_dict serialization.
 """
 
 import copy
@@ -98,6 +98,21 @@ class Optimizer:
 
         return True
 
+    def _validate_all_params_and_grads(self) -> List[bool]:
+        """Validates all parameters before calculating updates and returns an update mask."""
+        update_mask = []
+        for index, param in enumerate(self.params):
+            should_update = self._validate_param_and_grad(index, param)
+            update_mask.append(should_update)
+
+            if not should_update:
+                continue
+
+            self._assert_all_finite(param, param._data, f"parameter {index}")
+            self._assert_all_finite(param, param.grad._data, f"gradient for parameter {index}")
+
+        return update_mask
+
     def _assert_all_finite(self, param: Parameter, data: Any, label: str) -> None:
         """Fail-fast check ensuring tensor data contains only finite numbers (no NaN or Inf)."""
         flat_vals = param.backend.to_flat_list(data)
@@ -108,6 +123,31 @@ class Optimizer:
         """Creates a portable deep copy of backend native data."""
         nested = param.backend.to_nested_list(data)
         return param.backend.from_data(copy.deepcopy(nested))
+
+    def _clone_state(self) -> Dict[int, Dict[str, Any]]:
+        """Creates an isolated clone of optimizer runtime state preserving backend representations."""
+        cloned_state = {}
+        for index, state_entry in self.state.items():
+            param = self.params[index]
+            cloned_entry = {}
+            for key, value in state_entry.items():
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    cloned_entry[key] = copy.deepcopy(value)
+                else:
+                    cloned_entry[key] = self._clone_backend_data(param, value)
+            cloned_state[index] = cloned_entry
+        return cloned_state
+
+    def _commit_step(
+        self,
+        pending_param_data: Dict[int, Any],
+        pending_state: Dict[int, Dict[str, Any]],
+    ) -> None:
+        """Applies all computed and verified updates across all parameters in a single atomic transaction."""
+        for index, new_data in pending_param_data.items():
+            self.params[index]._data = new_data
+
+        self.state = pending_state
 
     def zero_grad(self, set_to_none: bool = True) -> None:
         """
@@ -202,7 +242,8 @@ class Optimizer:
 
             param = self.params[idx]
             restored_entry = self._validate_state_entry(idx, param, s)
-            restored_state[idx] = restored_entry
+            if restored_entry:
+                restored_state[idx] = restored_entry
 
         # 3. Apply changes atomically only after 100% verification
         self.defaults = validated_defaults

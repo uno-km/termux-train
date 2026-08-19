@@ -2,8 +2,8 @@
 termux_train.optim.adamw
 ========================
 AdamW (Adam with Decoupled Weight Decay) Optimizer.
-Fully hardened with real-number type validation, fail-fast finite checks, atomic state schemas,
-and non-destructive decoupled decay calculations.
+Fully hardened with real-number type validation, fail-fast finite checks, strict state schema enforcement,
+non-destructive decoupled decay calculations, and two-phase full-step transactional commits (Policy B).
 """
 
 import copy
@@ -71,7 +71,12 @@ class AdamW(Optimizer):
         )
 
     def _validate_state_entry(self, index: int, param: Parameter, state_entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Validates and restores AdamW parameter state entry."""
+        """Validates and restores AdamW parameter state entry strictly."""
+        allowed_keys = {"step", "exp_avg", "exp_avg_sq"}
+        unexpected_keys = set(state_entry) - allowed_keys
+        if unexpected_keys:
+            raise ValueError(f"Unexpected AdamW state fields for parameter {index}: {sorted(unexpected_keys)}")
+
         if "step" not in state_entry:
             raise ValueError(f"State entry for parameter {index} missing 'step'")
         step_val = state_entry["step"]
@@ -115,83 +120,81 @@ class AdamW(Optimizer):
         eps = self.defaults["eps"]
         weight_decay = self.defaults["weight_decay"]
 
-        # Phase 1: Validation and candidate calculation
-        candidates = []
-        for idx, p in enumerate(self.params):
-            if not self._validate_param_and_grad(idx, p):
+        update_mask = self._validate_all_params_and_grads()
+        pending_state = self._clone_state()
+        pending_param_data = {}
+
+        for index, param in enumerate(self.params):
+            if not update_mask[index]:
                 continue
 
-            self._assert_all_finite(p, p._data, f"parameter {idx}")
-            self._assert_all_finite(p, p.grad._data, f"gradient for parameter {idx}")
-
             # 1. Non-destructive Decoupled Weight Decay: theta_decayed = theta_(t-1) * (1 - lr * lambda)
-            decayed_param_data = p._data
+            decayed_param_data = param._data
             if weight_decay != 0.0:
-                decayed_param_data = p.backend.mul(
-                    p._data,
+                decayed_param_data = param.backend.mul(
+                    param._data,
                     1.0 - lr * weight_decay
                 )
-                self._assert_all_finite(p, decayed_param_data, f"decoupled decayed parameter {idx}")
+                self._assert_all_finite(param, decayed_param_data, f"decoupled decayed parameter {index}")
 
             # 2. Pure gradient (unpolluted by weight decay)
-            grad_data = p.grad._data
+            grad_data = param.grad._data
 
-            # 3. State Initialization
-            if idx not in self.state:
-                prev_step = 0
-                prev_exp_avg = p.backend.zeros(p.shape)
-                prev_exp_avg_sq = p.backend.zeros(p.shape)
-            else:
-                prev_state = self.state[idx]
-                prev_step = prev_state["step"]
-                prev_exp_avg = prev_state["exp_avg"]
-                prev_exp_avg_sq = prev_state["exp_avg_sq"]
-                self._assert_all_finite(p, prev_exp_avg, f"previous exp_avg for parameter {idx}")
-                self._assert_all_finite(p, prev_exp_avg_sq, f"previous exp_avg_sq for parameter {idx}")
+            # 3. State Initialization in pending state
+            if index not in pending_state:
+                pending_state[index] = {
+                    "step": 0,
+                    "exp_avg": param.backend.zeros(param.shape),
+                    "exp_avg_sq": param.backend.zeros(param.shape),
+                }
 
-            new_step_count = prev_step + 1
+            state_entry = pending_state[index]
+            new_step = state_entry["step"] + 1
+
+            self._assert_all_finite(param, state_entry["exp_avg"], f"previous exp_avg for parameter {index}")
+            self._assert_all_finite(param, state_entry["exp_avg_sq"], f"previous exp_avg_sq for parameter {index}")
 
             # 4. Update biased 1st and 2nd moment estimates
-            new_exp_avg = p.backend.add(
-                p.backend.mul(prev_exp_avg, beta1),
-                p.backend.mul(grad_data, 1.0 - beta1)
+            new_exp_avg = param.backend.add(
+                param.backend.mul(state_entry["exp_avg"], beta1),
+                param.backend.mul(grad_data, 1.0 - beta1)
             )
-            self._assert_all_finite(p, new_exp_avg, f"new exp_avg for parameter {idx}")
+            self._assert_all_finite(param, new_exp_avg, f"new exp_avg for parameter {index}")
 
-            grad_sq = p.backend.mul(grad_data, grad_data)
-            new_exp_avg_sq = p.backend.add(
-                p.backend.mul(prev_exp_avg_sq, beta2),
-                p.backend.mul(grad_sq, 1.0 - beta2)
+            grad_sq = param.backend.mul(grad_data, grad_data)
+            new_exp_avg_sq = param.backend.add(
+                param.backend.mul(state_entry["exp_avg_sq"], beta2),
+                param.backend.mul(grad_sq, 1.0 - beta2)
             )
-            self._assert_all_finite(p, new_exp_avg_sq, f"new exp_avg_sq for parameter {idx}")
+            self._assert_all_finite(param, new_exp_avg_sq, f"new exp_avg_sq for parameter {index}")
 
             # 5. Bias Corrections
-            bias_correction1 = 1.0 - (beta1 ** new_step_count)
-            bias_correction2 = 1.0 - (beta2 ** new_step_count)
+            bias_correction1 = 1.0 - (beta1 ** new_step)
+            bias_correction2 = 1.0 - (beta2 ** new_step)
 
-            m_hat = p.backend.div(new_exp_avg, bias_correction1)
-            v_hat = p.backend.div(new_exp_avg_sq, bias_correction2)
+            m_hat = param.backend.div(new_exp_avg, bias_correction1)
+            v_hat = param.backend.div(new_exp_avg_sq, bias_correction2)
 
             # 6. Compute denominator: sqrt(v_hat) + eps
-            sqrt_v = p.backend.pow(v_hat, 0.5)
-            denom = p.backend.add(sqrt_v, eps)
+            sqrt_v = param.backend.pow(v_hat, 0.5)
+            denom = param.backend.add(sqrt_v, eps)
 
             # 7. Step update from pure gradient
-            step_update = p.backend.mul(p.backend.div(m_hat, denom), lr)
-            self._assert_all_finite(p, step_update, f"step update for parameter {idx}")
+            step_update = param.backend.mul(param.backend.div(m_hat, denom), lr)
+            self._assert_all_finite(param, step_update, f"step update for parameter {index}")
 
             # 8. Final parameter: theta_t = theta_decayed - step_update
-            new_param_data = p.backend.sub(decayed_param_data, step_update)
-            self._assert_all_finite(p, new_param_data, f"new parameter data for parameter {idx}")
+            new_param_data = param.backend.sub(decayed_param_data, step_update)
+            self._assert_all_finite(param, new_param_data, f"new parameter data for parameter {index}")
 
-            new_state = {
-                "step": new_step_count,
-                "exp_avg": new_exp_avg,
-                "exp_avg_sq": new_exp_avg_sq,
-            }
-            candidates.append((idx, p, new_param_data, new_state))
+            state_entry["step"] = new_step
+            state_entry["exp_avg"] = new_exp_avg
+            state_entry["exp_avg_sq"] = new_exp_avg_sq
+            pending_param_data[index] = new_param_data
 
-        # Phase 2: Atomic commit across all parameters and states
-        for idx, p, new_data, new_state in candidates:
-            p._data = new_data
-            self.state[idx] = new_state
+        self._commit_step(
+            pending_param_data,
+            pending_state,
+        )
+
+        return None
