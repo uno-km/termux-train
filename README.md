@@ -189,28 +189,37 @@ trainer.fit(dataset=(x, target), epochs=50)
 trainer.fit(dataset=(x, target), epochs=50, resume_from="./checkpoints/checkpoint_latest.json")
 ```
 
-### 🎯 On-Device LoRA Adapter Checkpointing
+### 🎯 On-Device LoRA Adapter Fine-Tuning & Deployment (`MobileTrainer`)
 
 ```python
-from termux_train import nn, optim, runtime
+from termux_train import Tensor, nn, optim, runtime
 
-# Save adapter-only checkpoint (unmerged-only policy)
-lora_model = nn.Sequential(nn.LoRALinear(128, 64, rank=4), nn.Tanh(), nn.LoRALinear(64, 10, rank=4))
-lora_opt = optim.Adam(nn.adapter_parameters(lora_model), lr=0.01)
+# 1. Setup Frozen Base & LoRA Adapters
+base_model = nn.Sequential(nn.Linear(4, 16), nn.Tanh(), nn.Linear(16, 2))
+student = nn.Sequential(
+    nn.LoRALinear.from_linear(base_model[0], rank=2, alpha=4.0),
+    nn.Tanh(),
+    nn.LoRALinear.from_linear(base_model[2], rank=2, alpha=4.0),
+)
+optimizer = optim.Adam(nn.adapter_parameters(student), lr=0.08)
+criterion = nn.MSELoss()
 
-runtime.save_lora_checkpoint(
-    path="./checkpoints/lora_adapter.json",
-    model=lora_model,
-    optimizer=lora_opt,
-    epoch=5,
-    global_step=100,
-    extra={"eval_loss": 0.015},
+# 2. Configure MobileTrainer for LoRA Mode (Saves/Restores Adapter Parameters Only)
+trainer = runtime.MobileTrainer(
+    model=student,
+    optimizer=optimizer,
+    criterion=criterion,
+    checkpoint_dir="./checkpoints",
+    checkpoint_every_epochs=10,
+    lora_only=True,
 )
 
-# Load into fresh adapter model (atomic rollback on failure)
-fresh_lora = nn.Sequential(nn.LoRALinear(128, 64, rank=4), nn.Tanh(), nn.LoRALinear(64, 10, rank=4))
-fresh_opt = optim.Adam(nn.adapter_parameters(fresh_lora), lr=0.01)
-meta = runtime.load_lora_checkpoint("./checkpoints/lora_adapter.json", model=fresh_lora, optimizer=fresh_opt)
+# 3. Train & Resume
+trainer.fit(dataset=(train_x, train_target), epochs=20)
+trainer.fit(dataset=(train_x, train_target), epochs=20, resume_from="./checkpoints/checkpoint_latest.json")
+
+# 4. Zero-Overhead Inference Deployment Merge
+nn.merge_lora_adapters(student)
 ```
 
 ---
@@ -228,7 +237,7 @@ termux-train/
 │   ├── runtime/              # MobileTrainer, Safe Atomic Checkpoint Save/Load & Recovery Engine
 │   └── utils/                # Termux Environment Probe, Numerical Gradcheck
 ├── scripts/                  # Device Setup & Diagnostics Scripts, Code Exporter
-├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime Demos
+├── examples/                 # Basics, NN Forward/Backward, 1D~3D Matmul, XOR Training, Mobile Runtime & LoRA Demos
 └── tests/                    # Comprehensive Tensor, Backend, Autograd, NN, Optimizer, Runtime, LoRA, Checkpoint, and Training Test Suites
 ```
 
@@ -247,7 +256,7 @@ termux-train/
 - [x] **Sprint 3.9**: Complete 1D~3D Matmul Rank Matrix, 9 Forward/Backward Combinations & Linear 1D~3D Support (`SCRUM-351`)
 - [x] **Sprint 4**: Optimizers (`SGD`, `Adam`, `AdamW`) & XOR Convergence MVP (`SCRUM-296` ~ `SCRUM-300`)
 - [x] **Sprint 5**: Mobile Training Runtime & Safe Checkpointing (`SCRUM-301` ~ `SCRUM-307`)
-- [ ] **Sprint 6**: On-Device LoRA Adapter (`SCRUM-308` ~ `SCRUM-312`)
+- [x] **Sprint 6**: On-Device LoRA Adapter (`SCRUM-308` ~ `SCRUM-312`) *(Host Complete, Android Device Validation Pending)*
 - [ ] **Sprint 7**: Tiny Transformer & CharLM Toy Trainer (General 4D ND Matmul & Multi-Head Attention) (`SCRUM-313` ~ `SCRUM-319`)
 - [ ] **Sprint 8**: Packaging, Full Test Suite & v0.1.0-alpha Release (`SCRUM-320` ~ `SCRUM-325`)
 - [ ] **Sprint 9+**: ARM NEON & OpenCL Hardware Acceleration (`SCRUM-326` ~ `SCRUM-331`)

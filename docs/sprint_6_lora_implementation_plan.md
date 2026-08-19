@@ -196,16 +196,28 @@ Implemented & Hardened:
 ---
 
 ## Phase 5: SCRUM-312 - MobileTrainer and Toy Fine-tuning
-- **Status**: Current Task
-Implement:
-- adapter-only MobileTrainer flow
-- teacher-student adaptation experiment
-- convergence tests
-- save and resume tests
-- `examples/06_lora_adapter_training.py`
+- **Status**: Host Complete
+- **Commit Message**: `Add LoRA mobile fine-tuning lifecycle`
+- **Host Tests**: `461 passed, 1 warning`
+- **Example Verification**: `PASS` (Python & NumPy Backends)
+- **Android Termux Gate**: `PENDING`
 
-Commit:
-`Add LoRA mobile fine-tuning example`
+Implemented & Hardened:
+- MobileTrainer `lora_only` mode with strict boolean validation and centralized internal routing (`_checkpoint_mode`)
+- Constructor preflight validation: LoRA presence, unmerged-only lifecycle, stale snapshot rejection, and adapter-only optimizer parameter identity verification
+- Reentrant `fit()` protection (`_is_fitting`) preventing nested execution
+- Manual and periodic LoRA checkpointing (`checkpoint_epoch_X.json`, `checkpoint_latest.json`) with history tracking
+- Strict format mismatch validation between generic and LoRA checkpoints
+- Trainer-level transactional resume preserving `current_epoch`, `global_step`, and cumulative `history`
+- Step-success counter semantics: failure during save/callback preserves actual completed steps without rolling back compute
+- Deterministic Teacher-Student domain adaptation with >90% loss convergence on train and eval sets
+- Continuous vs interrupted training equivalence with exact parameter and prediction parity
+- Cross-backend resume and fine-tuning (PythonBackend ↔ NumPyBackend)
+- Base parameter invariance (exact value and identity preservation) across all training and resume phases
+- Transactional deployment merge (`nn.merge_lora_adapters`) with inference prediction parity (<1e-5 difference)
+- Merged state guards rejecting `fit()`, `save()`, and `resume()` until explicit unmerge
+- Standalone runnable demo: `examples/06_lora_adapter_training.py`
+- Dedicated comprehensive test suite: `tests/test_lora_training.py` (25 tests)
 
 ---
 

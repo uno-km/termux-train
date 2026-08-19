@@ -249,26 +249,7 @@ def save_checkpoint(
     container_json = json.dumps(container, indent=2)
 
     abs_path = os.path.abspath(path)
-    parent_dir = os.path.dirname(abs_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
-    tmp_path = f"{abs_path}.tmp"
-
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(container_json)
-            f.flush()
-            os.fsync(f.fileno())
-
-        os.replace(tmp_path, abs_path)
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-        raise CheckpointError(f"Failed to atomically save checkpoint to {path}: {e}") from e
+    _atomic_write_checkpoint(abs_path, container_json)
 
 
 def load_checkpoint(
@@ -318,7 +299,7 @@ def load_checkpoint(
         )
 
     if not isinstance(payload, dict) or payload.get("format") != "termux-train-checkpoint":
-        raise CheckpointSchemaError(f"Unsupported checkpoint format in {path}: {payload.get('format')}")
+        raise CheckpointSchemaError(f"Unsupported checkpoint format in {path}: {payload.get('format') if isinstance(payload, dict) else type(payload).__name__}")
 
     if payload.get("version") != "1.0":
         raise CheckpointSchemaError(f"Unsupported checkpoint version in {path}: {payload.get('version')}")
