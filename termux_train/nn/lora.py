@@ -4,7 +4,7 @@ termux_train.nn.lora
 Low-Rank Adaptation (LoRA) Layer for Parameter-Efficient On-Device Fine-Tuning.
 Freezes pre-trained base Linear weights and learns decomposed low-rank matrices
 lora_A (in_features, rank) and lora_B (rank, out_features) with scaling factor alpha / rank.
-Supports atomic, crash-resilient, cross-backend adapter-only state serialization and restoration.
+Supports atomic, crash-resilient adapter serialization and transactional merge/unmerge lifecycles.
 """
 
 import copy
@@ -64,6 +64,14 @@ def _validate_2d_matrix_data(data: Any, expected_shape: Tuple[int, int], name: s
                 raise ValueError(f"'{name}'[{r_idx}][{c_idx}] must be finite, got {val}")
 
 
+def _assert_param_finite(param: Parameter, name: str) -> None:
+    """Asserts that all elements in param._data are finite numeric values."""
+    flat = param.backend.to_flat_list(param._data)
+    for v in flat:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise ValueError(f"Non-finite value found in parameter '{name}': {v}")
+
+
 class LoRALinear(Module):
     """
     Applies Low-Rank Adaptation (LoRA) to an affine linear layer:
@@ -116,7 +124,8 @@ class LoRALinear(Module):
         if not math.isfinite(self._scaling) or self._scaling <= 0.0:
             raise ValueError("scaling factor must be finite and positive")
 
-        self._merged = False
+        self._merged: bool = False
+        self._base_weight_snapshot: Optional[Any] = None
 
         # 1. Base Linear Layer (Frozen)
         self.base = Linear(in_features=in_features, out_features=out_features, bias=bias, backend=b)
@@ -174,6 +183,7 @@ class LoRALinear(Module):
             raise ValueError("scaling factor must be finite and positive")
 
         lora._merged = False
+        lora._base_weight_snapshot = None
 
         # Preserve original linear object identity and freeze parameters
         lora.base = linear
@@ -228,6 +238,124 @@ class LoRALinear(Module):
     def named_adapter_parameters(self) -> List[Tuple[str, Parameter]]:
         """Returns the named adapter parameters [('lora_A', lora_A), ('lora_B', lora_B)]."""
         return [("lora_A", self.lora_A), ("lora_B", self.lora_B)]
+
+    def merge(self) -> None:
+        """
+        adapter delta를 base weight에 반영합니다 (W_base <- W_base + (A @ B) * scaling).
+        merge 직전의 base weight deep snapshot을 내부에 보관하여 unmerge 시 비트 단위 복원을 지원합니다.
+        Base Parameter 객체 식별자(id)와 requires_grad=False는 온전히 유지됩니다.
+        이미 merged 상태에서 재호출 시 RuntimeError를 발생시킵니다.
+        """
+        if self._merged:
+            raise RuntimeError("LoRALinear is already merged")
+
+        b = self.base.weight.backend
+        if self.lora_A.backend.name != b.name or self.lora_B.backend.name != b.name:
+            raise RuntimeError("Cross-backend LoRALinear parameters are not supported for merge")
+
+        # 1. Preflight validations
+        _assert_param_finite(self.base.weight, "base.weight")
+        _assert_param_finite(self.lora_A, "lora_A")
+        _assert_param_finite(self.lora_B, "lora_B")
+
+        if self.lora_A.shape != (self.in_features, self.rank):
+            raise ValueError(f"lora_A shape mismatch: expected {(self.in_features, self.rank)}, got {self.lora_A.shape}")
+        if self.lora_B.shape != (self.rank, self.out_features):
+            raise ValueError(f"lora_B shape mismatch: expected {(self.rank, self.out_features)}, got {self.lora_B.shape}")
+        if self.base.weight.shape != (self.in_features, self.out_features):
+            raise ValueError(f"base.weight shape mismatch: expected {(self.in_features, self.out_features)}, got {self.base.weight.shape}")
+
+        # 2. Native calculation
+        delta = b.matmul(self.lora_A._data, self.lora_B._data)
+        delta = b.mul(delta, self.scaling)
+        merged_weight = b.add(self.base.weight._data, delta)
+
+        # Validate merged weight
+        flat_merged = b.to_flat_list(merged_weight)
+        for v in flat_merged:
+            if not math.isfinite(v):
+                raise ValueError(f"Non-finite value encountered in merged weight: {v}")
+
+        # 3. Create independent deep snapshot of original base weight
+        snapshot = b.from_data(copy.deepcopy(self.base.weight.tolist()))
+
+        # 4. Transactional commit with full rollback
+        old_base_data = self.base.weight._data
+        old_snapshot = self._base_weight_snapshot
+        old_merged = self._merged
+
+        try:
+            self.base.weight._data = merged_weight
+            self._base_weight_snapshot = snapshot
+            self._merged = True
+        except Exception as commit_err:
+            rollback_errors = []
+            try:
+                self.base.weight._data = old_base_data
+            except Exception as r_err:
+                rollback_errors.append(f"base.weight rollback failed: {r_err}")
+            try:
+                self._base_weight_snapshot = old_snapshot
+            except Exception as r_err:
+                rollback_errors.append(f"_base_weight_snapshot rollback failed: {r_err}")
+            try:
+                self._merged = old_merged
+            except Exception as r_err:
+                rollback_errors.append(f"_merged rollback failed: {r_err}")
+
+            if rollback_errors:
+                raise RuntimeError(
+                    f"LoRA merge failed ({commit_err}) AND rollback failed: {'; '.join(rollback_errors)}"
+                ) from commit_err
+            raise commit_err
+
+    def unmerge(self) -> None:
+        """
+        merge 시점의 backend-native deep snapshot을 복원하여 base weight를 merge 이전 상태로 되돌립니다.
+        현재 adapter delta를 빼는 방식이 아니므로, merge 이후 adapter가 변경되었더라도 원본 base weight를 정확히 복원합니다.
+        Base Parameter 객체 식별자(id)와 requires_grad=False는 온전히 유지됩니다.
+        unmerged 상태에서 호출 시 RuntimeError를 발생시킵니다.
+        """
+        if not self._merged:
+            raise RuntimeError("LoRALinear is not merged")
+        if self._base_weight_snapshot is None:
+            raise RuntimeError("Missing base weight snapshot for unmerge")
+
+        b = self.base.weight.backend
+        flat_snap = b.to_flat_list(self._base_weight_snapshot)
+        for v in flat_snap:
+            if not math.isfinite(v):
+                raise ValueError(f"Non-finite value found in base weight snapshot: {v}")
+
+        # Transactional commit with full rollback
+        old_base_data = self.base.weight._data
+        old_snapshot = self._base_weight_snapshot
+        old_merged = self._merged
+
+        try:
+            self.base.weight._data = self._base_weight_snapshot
+            self._base_weight_snapshot = None
+            self._merged = False
+        except Exception as commit_err:
+            rollback_errors = []
+            try:
+                self.base.weight._data = old_base_data
+            except Exception as r_err:
+                rollback_errors.append(f"base.weight rollback failed: {r_err}")
+            try:
+                self._base_weight_snapshot = old_snapshot
+            except Exception as r_err:
+                rollback_errors.append(f"_base_weight_snapshot rollback failed: {r_err}")
+            try:
+                self._merged = old_merged
+            except Exception as r_err:
+                rollback_errors.append(f"_merged rollback failed: {r_err}")
+
+            if rollback_errors:
+                raise RuntimeError(
+                    f"LoRA unmerge failed ({commit_err}) AND rollback failed: {'; '.join(rollback_errors)}"
+                ) from commit_err
+            raise commit_err
 
     def adapter_state_dict(self) -> Dict[str, Any]:
         """
@@ -352,7 +480,8 @@ class LoRALinear(Module):
     def forward(self, x: Tensor) -> Tensor:
         """
         Forward computation:
-          y = base(x) + ((x @ lora_A) @ lora_B) * scaling
+          y = base(x) + ((x @ lora_A) @ lora_B) * scaling (when unmerged)
+          y = base(x) (when merged, adapter delta is fused into base weight)
         Supported inputs:
           1D: (in_features,) -> (out_features,)
           2D: (batch_size, in_features) -> (batch_size, out_features)
@@ -384,6 +513,176 @@ class LoRALinear(Module):
             f"rank={self.rank}, alpha={self.alpha}, scaling={self.scaling:.4f}, "
             f"bias={self.base.bias is not None}, merged={self.merged})"
         )
+
+
+def _collect_lora_layers(module: Module) -> List[LoRALinear]:
+    """Recursively collects all LoRALinear layers within module hierarchy in deterministic order with deduplication."""
+    if isinstance(module, LoRALinear):
+        return [module]
+
+    layers: List[LoRALinear] = []
+    visited_ids = set()
+
+    def _traverse(m: Module):
+        if id(m) in visited_ids:
+            return
+        visited_ids.add(id(m))
+
+        if isinstance(m, LoRALinear):
+            layers.append(m)
+            return
+
+        for sub_m in m._modules.values():
+            if sub_m is not None:
+                _traverse(sub_m)
+
+    _traverse(module)
+    return layers
+
+
+def merge_lora_adapters(module: Module) -> None:
+    """
+    모듈 계층 내의 모든 LoRALinear 레이어를 재귀적으로 탐색하여 일괄 merge를 수행합니다.
+    공유 모듈(shared module)은 중복 merge되지 않도록 한 번만 처리합니다.
+    어느 한 레이어라도 이미 merged 상태이거나 검증/계산에 실패하면 어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
+    커밋 도중 예외가 발생할 경우 모든 레이어를 호출 전 상태로 원자적 롤백합니다.
+    LoRALinear가 없는 빈 모듈에 대해서는 안전하게 no-op으로 종료합니다.
+    """
+    layers = _collect_lora_layers(module)
+    if not layers:
+        return
+
+    # Check for mixed / invalid lifecycle state
+    for layer in layers:
+        if layer.merged:
+            raise RuntimeError("One or more LoRALinear layers are already merged")
+
+    # Phase 1: Preflight & Stage for all layers
+    staged: List[Tuple[LoRALinear, Any, Any, Any, Any, bool]] = []
+    for layer in layers:
+        b = layer.base.weight.backend
+        if layer.lora_A.backend.name != b.name or layer.lora_B.backend.name != b.name:
+            raise RuntimeError("Cross-backend LoRALinear parameters are not supported for merge")
+
+        _assert_param_finite(layer.base.weight, "base.weight")
+        _assert_param_finite(layer.lora_A, "lora_A")
+        _assert_param_finite(layer.lora_B, "lora_B")
+
+        if layer.lora_A.shape != (layer.in_features, layer.rank):
+            raise ValueError(f"lora_A shape mismatch: expected {(layer.in_features, layer.rank)}, got {layer.lora_A.shape}")
+        if layer.lora_B.shape != (layer.rank, layer.out_features):
+            raise ValueError(f"lora_B shape mismatch: expected {(layer.rank, layer.out_features)}, got {layer.lora_B.shape}")
+        if layer.base.weight.shape != (layer.in_features, layer.out_features):
+            raise ValueError(f"base.weight shape mismatch: expected {(layer.in_features, layer.out_features)}, got {layer.base.weight.shape}")
+
+        delta = b.matmul(layer.lora_A._data, layer.lora_B._data)
+        delta = b.mul(delta, layer.scaling)
+        merged_weight = b.add(layer.base.weight._data, delta)
+
+        flat_merged = b.to_flat_list(merged_weight)
+        for v in flat_merged:
+            if not math.isfinite(v):
+                raise ValueError(f"Non-finite value encountered in merged weight: {v}")
+
+        snapshot = b.from_data(copy.deepcopy(layer.base.weight.tolist()))
+
+        old_base = layer.base.weight._data
+        old_snap = layer._base_weight_snapshot
+        old_m = layer._merged
+
+        staged.append((layer, merged_weight, snapshot, old_base, old_snap, old_m))
+
+    # Phase 2: Transactional commit across all layers
+    try:
+        for layer, merged_weight, snapshot, _, _, _ in staged:
+            layer.base.weight._data = merged_weight
+            layer._base_weight_snapshot = snapshot
+            layer._merged = True
+    except Exception as commit_err:
+        rollback_errors = []
+        for layer, _, _, old_base, old_snap, old_m in staged:
+            try:
+                layer.base.weight._data = old_base
+            except Exception as r_err:
+                rollback_errors.append(f"{layer}.base.weight rollback failed: {r_err}")
+            try:
+                layer._base_weight_snapshot = old_snap
+            except Exception as r_err:
+                rollback_errors.append(f"{layer} snapshot rollback failed: {r_err}")
+            try:
+                layer._merged = old_m
+            except Exception as r_err:
+                rollback_errors.append(f"{layer} merged flag rollback failed: {r_err}")
+
+        if rollback_errors:
+            raise RuntimeError(
+                f"Multi-layer merge failed ({commit_err}) AND rollback failed: {'; '.join(rollback_errors)}"
+            ) from commit_err
+        raise commit_err
+
+
+def unmerge_lora_adapters(module: Module) -> None:
+    """
+    모듈 계층 내의 모든 LoRALinear 레이어를 재귀적으로 탐색하여 일괄 unmerge를 수행합니다.
+    공유 모듈은 한 번만 처리합니다.
+    어느 한 레이어라도 unmerged 상태이거나 snapshot이 누락된 경우 어떤 레이어도 변경하지 않고 전체 호출을 거부합니다.
+    커밋 도중 예외가 발생할 경우 모든 레이어의 merged 상태를 원자적으로 복원합니다.
+    LoRALinear가 없는 빈 모듈에 대해서는 안전하게 no-op으로 종료합니다.
+    """
+    layers = _collect_lora_layers(module)
+    if not layers:
+        return
+
+    # Check for mixed / invalid lifecycle state
+    for layer in layers:
+        if not layer.merged:
+            raise RuntimeError("One or more LoRALinear layers are not merged")
+        if layer._base_weight_snapshot is None:
+            raise RuntimeError("Missing base weight snapshot for unmerge in one or more layers")
+
+    # Phase 1: Preflight & Stage for all layers
+    staged: List[Tuple[LoRALinear, Any, Any, Any, bool]] = []
+    for layer in layers:
+        b = layer.base.weight.backend
+        flat_snap = b.to_flat_list(layer._base_weight_snapshot)
+        for v in flat_snap:
+            if not math.isfinite(v):
+                raise ValueError(f"Non-finite value found in base weight snapshot: {v}")
+
+        snap_to_restore = layer._base_weight_snapshot
+        old_base = layer.base.weight._data
+        old_snap = layer._base_weight_snapshot
+        old_m = layer._merged
+
+        staged.append((layer, snap_to_restore, old_base, old_snap, old_m))
+
+    # Phase 2: Transactional commit across all layers
+    try:
+        for layer, snap_to_restore, _, _, _ in staged:
+            layer.base.weight._data = snap_to_restore
+            layer._base_weight_snapshot = None
+            layer._merged = False
+    except Exception as commit_err:
+        rollback_errors = []
+        for layer, _, old_base, old_snap, old_m in staged:
+            try:
+                layer.base.weight._data = old_base
+            except Exception as r_err:
+                rollback_errors.append(f"{layer}.base.weight rollback failed: {r_err}")
+            try:
+                layer._base_weight_snapshot = old_snap
+            except Exception as r_err:
+                rollback_errors.append(f"{layer} snapshot rollback failed: {r_err}")
+            try:
+                layer._merged = old_m
+            except Exception as r_err:
+                rollback_errors.append(f"{layer} merged flag rollback failed: {r_err}")
+
+        if rollback_errors:
+            raise RuntimeError(
+                f"Multi-layer unmerge failed ({commit_err}) AND rollback failed: {'; '.join(rollback_errors)}"
+            ) from commit_err
+        raise commit_err
 
 
 def adapter_parameters(module: Module) -> List[Parameter]:

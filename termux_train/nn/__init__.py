@@ -16,6 +16,8 @@ from .lora import (
     named_adapter_parameters,
     adapter_state_dict,
     load_adapter_state_dict,
+    merge_lora_adapters,
+    unmerge_lora_adapters,
 )
 
 __all__ = [
@@ -35,4 +37,6 @@ __all__ = [
     "named_adapter_parameters",
     "adapter_state_dict",
     "load_adapter_state_dict",
+    "merge_lora_adapters",
+    "unmerge_lora_adapters",
 ]

@@ -119,7 +119,7 @@ Implemented:
 - **Status**: Host Complete
 - **Base Commit**: `881bce2` (`Add atomic LoRA adapter state serialization`)
 - **Hardening Commit 1**: `1ad912f` (`Harden atomic LoRA adapter state loading`)
-- **Hardening Commit 2**: `Harden LoRA model adapter container schema`
+- **Hardening Commit 2**: `5eabce5` (`Harden LoRA model adapter container schema`)
 - **Host Tests**: `363 passed, 1 warning`
 - **Android Termux Gate**: `PENDING`
 
@@ -140,22 +140,33 @@ Implemented & Hardened:
 ---
 
 ## Phase 3: SCRUM-310 - Transactional Merge and Unmerge
-- **Status**: Current Task
-Implement:
-- `merge()`
-- `unmerge()`
-- exact pre-merge base snapshot
-- strict merge lifecycle policy
-- atomic failure rollback
-- Parameter identity preservation
-- prevention of adapter double application
+- **Status**: Host Complete
+- **Commit Message**: `Add transactional LoRA merge lifecycle`
+- **Host Tests**: `393 passed, 1 warning`
+- **Android Termux Gate**: `PENDING`
 
-Commit:
-`Add transactional LoRA merge lifecycle`
+Implemented & Hardened:
+- `LoRALinear.merge()` & `LoRALinear.unmerge()`
+- `merge_lora_adapters(module)` & `unmerge_lora_adapters(module)` recursive module helpers
+- Merged forward removes LoRA-specific projection operations and executes only the base linear path
+- Forward parity is verified with explicit tolerance (`abs=1e-6, rel=1e-6`)
+- Exact merge-time backend-native deep snapshot restoration (`_base_weight_snapshot`)
+- Unmerge restores snapshot exactly under successful backend assignment (no delta subtraction drift)
+- Strict lifecycle transition policy: double merge rejection and invalid unmerge rejection
+- Adapter double-application prevention during merged forward
+- Transactional single-layer commit rollback and multi-layer model rollback
+- Rollback assignment failure detection and explicit exception reporting
+- Parameter identity preservation (`id(base.weight)`, `id(lora_A)`, `id(lora_B)`)
+- Optimizer adapter reference preservation (`optimizer.params[0] is layer.lora_A`)
+- Backend identity and `requires_grad` preservation
+- Adapter mutation after merge isolation: exact base restoration verified
+- Module deduplication (`visited_ids`) preventing double-merge on shared layers
+- Empty module no-op guarantee
 
 ---
 
 ## Phase 4: SCRUM-311 - Safe LoRA Checkpoint Integration
+- **Status**: Current Task
 Implement:
 - unmerged-only adapter checkpoint policy
 - adapter checkpoint schema

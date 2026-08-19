@@ -878,3 +878,432 @@ def test_container_model_rejects_outer_schema_mismatch(active_backend):
     with pytest.raises(TypeError, match="must be a dict"):
         load_adapter_state_dict(model, bad_state)
     assert model[0].lora_A.tolist() == orig_a
+
+
+# =============================================================================
+# 8. SCRUM-310: Transactional Merge and Unmerge Lifecycle
+# =============================================================================
+
+def test_lora_single_layer_merge_forward_parity_and_unmerge_restoration(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0, bias=True)
+    layer.lora_A._data = layer.lora_A.backend.from_data([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    x = Tensor([[1.0, 2.0, 3.0, 4.0]])
+    unmerged_out = layer(x)
+
+    orig_base_weight = copy.deepcopy(layer.base.weight.tolist())
+    orig_base_bias = copy.deepcopy(layer.base.bias.tolist())
+
+    assert layer.merged is False
+    assert layer._base_weight_snapshot is None
+
+    # 1. Merge
+    layer.merge()
+    assert layer.merged is True
+    assert layer._base_weight_snapshot is not None
+
+    merged_out = layer(x)
+
+    # Forward output parity within tolerance
+    assert merged_out.flatten().tolist() == pytest.approx(unmerged_out.flatten().tolist(), abs=1e-6, rel=1e-6)
+
+    # Base weight modified by delta
+    assert layer.base.weight.tolist() != orig_base_weight
+    assert layer.base.bias.tolist() == orig_base_bias
+
+    # 2. Unmerge
+    layer.unmerge()
+    assert layer.merged is False
+    assert layer._base_weight_snapshot is None
+
+    # Exact snapshot restoration
+    assert layer.base.weight.tolist() == orig_base_weight
+    assert layer.base.bias.tolist() == orig_base_bias
+
+    restored_out = layer(x)
+    assert restored_out.flatten().tolist() == pytest.approx(unmerged_out.flatten().tolist(), abs=1e-6, rel=1e-6)
+
+
+def test_lora_deep_snapshot_exact_restoration_after_adapter_mutation(active_backend):
+    layer = nn.LoRALinear(in_features=3, out_features=2, rank=2, alpha=2.0)
+    layer.lora_A._data = layer.lora_A.backend.from_data([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[0.1, 0.2], [0.3, 0.4]])
+
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+
+    layer.merge()
+
+    # Mutate adapter factors while merged!
+    layer.lora_A._data = layer.lora_A.backend.from_data([[99.0, 99.0], [99.0, 99.0], [99.0, 99.0]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[88.0, 88.0], [88.0, 88.0]])
+
+    # Unmerge must restore original base from deep snapshot, not current delta subtraction!
+    layer.unmerge()
+    assert layer.base.weight.tolist() == orig_base
+
+
+def test_lora_repeated_merge_unmerge_cycles_no_drift(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    layer.lora_A._data = layer.lora_A.backend.from_data([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+    x = Tensor([[1.0, 2.0, 3.0, 4.0]])
+    expected_out = layer(x).flatten().tolist()
+
+    for cycle in range(5):
+        layer.merge()
+        assert layer.merged is True
+        merged_out = layer(x).flatten().tolist()
+        assert merged_out == pytest.approx(expected_out, abs=1e-6, rel=1e-6)
+
+        layer.unmerge()
+        assert layer.merged is False
+        assert layer.base.weight.tolist() == orig_base
+        unmerged_out = layer(x).flatten().tolist()
+        assert unmerged_out == pytest.approx(expected_out, abs=1e-6, rel=1e-6)
+
+
+def test_lora_illegal_merge_unmerge_lifecycle_rejections(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+    orig_weight_id = id(layer.base.weight)
+
+    # 1. Unmerge on unmerged layer raises
+    with pytest.raises(RuntimeError, match="LoRALinear is not merged"):
+        layer.unmerge()
+    assert layer.merged is False
+    assert layer.base.weight.tolist() == orig_base
+    assert id(layer.base.weight) == orig_weight_id
+
+    # 2. Double merge raises
+    layer.merge()
+    merged_weight = copy.deepcopy(layer.base.weight.tolist())
+    with pytest.raises(RuntimeError, match="LoRALinear is already merged"):
+        layer.merge()
+    assert layer.merged is True
+    assert layer.base.weight.tolist() == merged_weight
+    assert id(layer.base.weight) == orig_weight_id
+
+    # Cleanup
+    layer.unmerge()
+    assert layer.merged is False
+    assert layer.base.weight.tolist() == orig_base
+
+
+def test_lora_merge_unmerge_parameter_identities_and_optimizer_references(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=True)
+    orig_base_id = id(layer.base)
+    orig_weight_id = id(layer.base.weight)
+    orig_bias_id = id(layer.base.bias)
+    orig_a_id = id(layer.lora_A)
+    orig_b_id = id(layer.lora_B)
+
+    optimizer = optim.SGD(layer.adapter_parameters(), lr=0.1)
+
+    layer.merge()
+    assert id(layer.base) == orig_base_id
+    assert id(layer.base.weight) == orig_weight_id
+    assert id(layer.base.bias) == orig_bias_id
+    assert id(layer.lora_A) == orig_a_id
+    assert id(layer.lora_B) == orig_b_id
+    assert optimizer.params[0] is layer.lora_A
+    assert optimizer.params[1] is layer.lora_B
+    assert layer.base.weight.requires_grad is False
+    assert layer.base.bias.requires_grad is False
+    assert layer.lora_A.requires_grad is True
+    assert layer.lora_B.requires_grad is True
+
+    layer.unmerge()
+    assert id(layer.base) == orig_base_id
+    assert id(layer.base.weight) == orig_weight_id
+    assert id(layer.base.bias) == orig_bias_id
+    assert id(layer.lora_A) == orig_a_id
+    assert id(layer.lora_B) == orig_b_id
+    assert optimizer.params[0] is layer.lora_A
+    assert optimizer.params[1] is layer.lora_B
+
+
+def test_lora_merge_unmerge_gradient_lifecycle(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, bias=True)
+    layer.lora_B._data = layer.lora_B.backend.from_data([[0.1, -0.1], [0.2, 0.05]])
+
+    x = Tensor([[1.0, 1.0, 1.0, 1.0]])
+    loss = (layer(x) ** 2).sum()
+    loss.backward()
+
+    # Pre-merge gradients exist on adapter B
+    orig_b_grad = copy.deepcopy(layer.lora_B.grad.tolist())
+    assert layer.base.weight.grad is None
+
+    # Merge preserves existing grad object/values
+    layer.merge()
+    assert layer.lora_B.grad.tolist() == orig_b_grad
+    assert layer.base.weight.grad is None
+
+    # Forward in merged state does not attach adapter factors
+    loss_merged = (layer(x) ** 2).sum()
+    # Backward in merged state: base weight has no grad
+    loss_merged.backward()
+    assert layer.base.weight.grad is None
+
+    layer.unmerge()
+    assert layer.base.weight.grad is None
+
+
+def test_lora_merged_state_serialization_policy(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2, alpha=2.0)
+    layer.lora_A._data = layer.lora_A.backend.from_data([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]])
+    layer.lora_B._data = layer.lora_B.backend.from_data([[1.0, 2.0], [3.0, 4.0]])
+
+    layer.merge()
+
+    # 1. adapter_state_dict works in merged state and only contains adapter factors
+    state = layer.adapter_state_dict()
+    assert "lora_A" in state
+    assert "lora_B" in state
+    assert "base.weight" not in state
+    assert "_base_weight_snapshot" not in state
+
+    # 2. load_adapter_state_dict is rejected while merged
+    with pytest.raises(RuntimeError, match="Cannot load adapter state into a merged LoRALinear"):
+        layer.load_adapter_state_dict(state)
+
+    layer.unmerge()
+    # 3. After unmerge, loading succeeds
+    layer.load_adapter_state_dict(state)
+
+
+def test_lora_merge_preflight_calculation_failure_rejections(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+
+    # Inject NaN into lora_A
+    layer.lora_A._data = layer.lora_A.backend.from_data([[float("nan"), 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]])
+    with pytest.raises(ValueError, match="Non-finite value"):
+        layer.merge()
+
+    assert layer.merged is False
+    assert layer._base_weight_snapshot is None
+    assert layer.base.weight.tolist() == orig_base
+
+
+def test_lora_merge_commit_failure_injection_rollback(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    orig_base = copy.deepcopy(layer.base.weight.tolist())
+    orig_weight_id = id(layer.base.weight)
+
+    orig_cls = layer.base.weight.__class__
+
+    class FailingParam(orig_cls):
+        @property
+        def _data(self):
+            return self._backing_data
+
+        @_data.setter
+        def _data(self, val):
+            if getattr(self, "_crash", False):
+                raise RuntimeError("Simulated crash during base weight commit")
+            self._backing_data = val
+
+    layer.base.weight._backing_data = layer.base.weight._data
+    layer.base.weight.__class__ = FailingParam
+    layer.base.weight._crash = True
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated crash during base weight commit"):
+            layer.merge()
+    finally:
+        layer.base.weight._crash = False
+        layer.base.weight.__class__ = orig_cls
+        del layer.base.weight._backing_data
+
+    # State 100% rolled back
+    assert layer.merged is False
+    assert layer._base_weight_snapshot is None
+    assert layer.base.weight.tolist() == orig_base
+    assert id(layer.base.weight) == orig_weight_id
+
+
+def test_lora_unmerge_commit_failure_injection_rollback(active_backend):
+    layer = nn.LoRALinear(in_features=4, out_features=2, rank=2)
+    layer.merge()
+    merged_weight = copy.deepcopy(layer.base.weight.tolist())
+    snapshot_copy = copy.deepcopy(layer._base_weight_snapshot)
+
+    orig_cls = layer.base.weight.__class__
+
+    class FailingParam(orig_cls):
+        @property
+        def _data(self):
+            return self._backing_data
+
+        @_data.setter
+        def _data(self, val):
+            if getattr(self, "_crash", False):
+                raise RuntimeError("Simulated crash during unmerge base weight restore")
+            self._backing_data = val
+
+    layer.base.weight._backing_data = layer.base.weight._data
+    layer.base.weight.__class__ = FailingParam
+    layer.base.weight._crash = True
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated crash during unmerge base weight restore"):
+            layer.unmerge()
+    finally:
+        layer.base.weight._crash = False
+        layer.base.weight.__class__ = orig_cls
+        del layer.base.weight._backing_data
+
+    # Rollback to merged state
+    assert layer.merged is True
+    assert layer.base.weight.tolist() == merged_weight
+    assert layer._base_weight_snapshot is not None
+
+    # Clean unmerge
+    layer.unmerge()
+    assert layer.merged is False
+
+
+def test_lora_recursive_module_merge_and_unmerge(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters, unmerge_lora_adapters
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2, alpha=2.0),
+        nn.Tanh(),
+        nn.Linear(6, 6),
+        nn.LoRALinear(6, 2, rank=2, alpha=2.0),
+    )
+    # Populate non-zero adapters
+    model[0].lora_B._data = model[0].lora_B.backend.from_data([[0.1 for _ in range(6)], [0.2 for _ in range(6)]])
+    model[3].lora_B._data = model[3].lora_B.backend.from_data([[0.3, 0.4], [0.5, 0.6]])
+
+    orig_l0_base = copy.deepcopy(model[0].base.weight.tolist())
+    orig_l3_base = copy.deepcopy(model[3].base.weight.tolist())
+
+    x = Tensor([[1.0, 2.0, 3.0, 4.0]])
+    unmerged_out = model(x).flatten().tolist()
+
+    # 1. Recursive merge
+    merge_lora_adapters(model)
+    assert model[0].merged is True
+    assert model[3].merged is True
+
+    merged_out = model(x).flatten().tolist()
+    assert merged_out == pytest.approx(unmerged_out, abs=1e-6, rel=1e-6)
+
+    # 2. Recursive unmerge
+    unmerge_lora_adapters(model)
+    assert model[0].merged is False
+    assert model[3].merged is False
+    assert model[0].base.weight.tolist() == orig_l0_base
+    assert model[3].base.weight.tolist() == orig_l3_base
+
+    restored_out = model(x).flatten().tolist()
+    assert restored_out == pytest.approx(unmerged_out, abs=1e-6, rel=1e-6)
+
+
+def test_lora_recursive_shared_module_deduplication(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters, unmerge_lora_adapters
+
+    shared_lora = nn.LoRALinear(4, 4, rank=2, alpha=2.0)
+    model = nn.Sequential(shared_lora, nn.Tanh(), shared_lora)
+
+    orig_base = copy.deepcopy(shared_lora.base.weight.tolist())
+
+    # Merging model must only merge shared_lora exactly once
+    merge_lora_adapters(model)
+    assert shared_lora.merged is True
+
+    unmerge_lora_adapters(model)
+    assert shared_lora.merged is False
+    assert shared_lora.base.weight.tolist() == orig_base
+
+
+def test_lora_recursive_mixed_lifecycle_rejections(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters, unmerge_lora_adapters
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2),
+        nn.LoRALinear(6, 2, rank=2),
+    )
+    # Manually merge layer 0 only
+    model[0].merge()
+
+    orig_l0_weight = copy.deepcopy(model[0].base.weight.tolist())
+    orig_l1_weight = copy.deepcopy(model[1].base.weight.tolist())
+
+    # Recursive merge must reject mixed state without modifying layer 1
+    with pytest.raises(RuntimeError, match="already merged"):
+        merge_lora_adapters(model)
+    assert model[1].merged is False
+    assert model[1].base.weight.tolist() == orig_l1_weight
+
+    # Recursive unmerge must reject mixed state without modifying layer 0
+    with pytest.raises(RuntimeError, match="not merged"):
+        unmerge_lora_adapters(model)
+    assert model[0].merged is True
+    assert model[0].base.weight.tolist() == orig_l0_weight
+
+    # Clean up
+    model[0].unmerge()
+
+
+def test_lora_recursive_merge_commit_failure_injection_rollback(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters
+
+    model = nn.Sequential(
+        nn.LoRALinear(4, 6, rank=2),
+        nn.LoRALinear(6, 2, rank=2),
+    )
+    orig_l0_base = copy.deepcopy(model[0].base.weight.tolist())
+    orig_l1_base = copy.deepcopy(model[1].base.weight.tolist())
+
+    # Crash on layer 1 base weight commit
+    orig_cls = model[1].base.weight.__class__
+
+    class CrashingParam(orig_cls):
+        @property
+        def _data(self):
+            return self._backing_data
+
+        @_data.setter
+        def _data(self, val):
+            if getattr(self, "_crash", False):
+                raise RuntimeError("Simulated crash during layer 1 merge commit")
+            self._backing_data = val
+
+    model[1].base.weight._backing_data = model[1].base.weight._data
+    model[1].base.weight.__class__ = CrashingParam
+    model[1].base.weight._crash = True
+
+    try:
+        with pytest.raises(RuntimeError, match="Simulated crash during layer 1 merge commit"):
+            merge_lora_adapters(model)
+    finally:
+        model[1].base.weight._crash = False
+        model[1].base.weight.__class__ = orig_cls
+        del model[1].base.weight._backing_data
+
+    # Both layer 0 and layer 1 must be 100% rolled back to unmerged state!
+    assert model[0].merged is False
+    assert model[0]._base_weight_snapshot is None
+    assert model[0].base.weight.tolist() == orig_l0_base
+    assert model[1].merged is False
+    assert model[1]._base_weight_snapshot is None
+    assert model[1].base.weight.tolist() == orig_l1_base
+
+
+def test_lora_empty_module_merge_unmerge_noop(active_backend):
+    from termux_train.nn.lora import merge_lora_adapters, unmerge_lora_adapters
+
+    plain_model = nn.Sequential(
+        nn.Linear(4, 8),
+        nn.ReLU(),
+        nn.Linear(8, 2),
+    )
+    # Safe no-op
+    merge_lora_adapters(plain_model)
+    unmerge_lora_adapters(plain_model)
