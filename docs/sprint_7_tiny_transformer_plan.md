@@ -109,3 +109,18 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Host Tests**: `486 passed, 1 warning` (25 tokenization tests 100% PASS)
 - **Jira Status**: `검토 중 (Ready for Device Validation)`
 - **Android Termux Gate**: `PENDING`
+
+### Gate 7.1 & Gate 7.2 / Phase 2: SCRUM-315 - Transformer Math Spec, Tensor Dtype & N-D Batched Matmul (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `6a368c2` (`Add Tensor dtype foundation, iterative autograd, and generalized ND matmul`)
+- **Host Tests**: `509 passed, 1 warning` (23 dtype & transformer math tests 100% PASS)
+- **Files**:
+  - `docs/tiny_transformer_spec.md`
+  - `termux_train/tensor.py`
+  - `termux_train/backend/base.py`
+  - `termux_train/backend/python_backend.py`
+  - `termux_train/backend/numpy_backend.py`
+  - `tests/test_dtype.py`
+  - `tests/test_transformer_math.py`
+- **Jira Status**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
