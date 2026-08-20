@@ -2,8 +2,9 @@
 termux_train.tensor
 ===================
 Core Multi-Dimensional Tensor Class with Dynamic DAG Autograd Engine.
-Supports multi-dtype representation (float32, int64, bool), iterative DAG traversal,
-generalized N-D batched matmul, and Transformer mathematical primitives.
+Supports multi-dtype representation (float32, int64, bool), explicit Type Promotion,
+in-place version tracking, iterative DAG traversal, generalized N-D batched matmul,
+and Transformer mathematical primitives.
 """
 
 import math
@@ -11,6 +12,14 @@ from typing import Any, Tuple, Set, List, Optional, Union, Callable
 from .backend import get_backend, BaseBackend
 
 VALID_DTYPES = {"float32", "int64", "bool"}
+
+def _promote_dtype(dt1: str, dt2: str) -> str:
+    """Explicit type promotion rule matrix."""
+    if dt1 == "float32" or dt2 == "float32":
+        return "float32"
+    if dt1 == "int64" or dt2 == "int64":
+        return "int64"
+    return "bool"
 
 def _invert_permutation(axes: Tuple[int, ...]) -> Tuple[int, ...]:
     inv = [0] * len(axes)
@@ -82,7 +91,8 @@ def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Te
 class Tensor:
     """
     Core Tensor class supporting multi-dimensional arrays, pluggable backends,
-    multi-dtype representation (float32, int64, bool), and dynamic reverse-mode automatic differentiation.
+    multi-dtype representation (float32, int64, bool), in-place modification detection,
+    and dynamic reverse-mode automatic differentiation.
     """
 
     def __init__(
@@ -115,6 +125,7 @@ class Tensor:
         self._backward: Callable[[], None] = lambda: None
         self._prev: Set['Tensor'] = set(_prev)
         self._op: str = _op
+        self._version: int = 0
 
     def _accumulate_grad_data(self, grad_data: Any) -> None:
         """Accumulate incoming raw gradient data into self.grad safely."""
@@ -148,6 +159,7 @@ class Tensor:
 
     @data.setter
     def data(self, value: Any) -> None:
+        self._version += 1
         if isinstance(value, Tensor):
             self._data = self.backend.from_data(value.tolist(), dtype=self.dtype)
         else:
@@ -255,7 +267,11 @@ class Tensor:
         )
 
         orig_shape = self.shape
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 d_self = self.backend.reshape(out.grad._data, orig_shape)
                 if self.grad is None:
@@ -306,7 +322,11 @@ class Tensor:
         )
 
         inv_axes = _invert_permutation(axes_tuple)
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 d_self = self.backend.transpose(out.grad._data, inv_axes)
                 if self.grad is None:
@@ -334,16 +354,23 @@ class Tensor:
 
     def __add__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
+        out_dtype = _promote_dtype(self.dtype, other.dtype)
         out_data = self.backend.add(self._data, other._data)
         out = Tensor(
             out_data,
+            dtype=out_dtype,
             requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="+",
             backend=self.backend
         )
 
+        saved_v_self = self._version
+        saved_v_other = other._version
+
         def _backward():
+            if self._version != saved_v_self or other._version != saved_v_other:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if out.grad is not None:
                 if self.requires_grad:
                     d_self = self.backend.unbroadcast(out.grad._data, self.shape)
@@ -366,16 +393,23 @@ class Tensor:
 
     def __sub__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
+        out_dtype = _promote_dtype(self.dtype, other.dtype)
         out_data = self.backend.sub(self._data, other._data)
         out = Tensor(
             out_data,
+            dtype=out_dtype,
             requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="-",
             backend=self.backend
         )
 
+        saved_v_self = self._version
+        saved_v_other = other._version
+
         def _backward():
+            if self._version != saved_v_self or other._version != saved_v_other:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if out.grad is not None:
                 if self.requires_grad:
                     d_self = self.backend.unbroadcast(out.grad._data, self.shape)
@@ -400,16 +434,23 @@ class Tensor:
 
     def __mul__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
+        out_dtype = _promote_dtype(self.dtype, other.dtype)
         out_data = self.backend.mul(self._data, other._data)
         out = Tensor(
             out_data,
+            dtype=out_dtype,
             requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="*",
             backend=self.backend
         )
 
+        saved_v_self = self._version
+        saved_v_other = other._version
+
         def _backward():
+            if self._version != saved_v_self or other._version != saved_v_other:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if out.grad is not None:
                 if self.requires_grad:
                     g_self = self.backend.mul(out.grad._data, other._data)
@@ -437,16 +478,21 @@ class Tensor:
         out_data = self.backend.div(self._data, other._data)
         out = Tensor(
             out_data,
+            dtype="float32",
             requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="/",
             backend=self.backend
         )
 
+        saved_v_self = self._version
+        saved_v_other = other._version
+
         def _backward():
+            if self._version != saved_v_self or other._version != saved_v_other:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if out.grad is not None:
                 if self.requires_grad:
-                    # d/da (a/b) = 1/b
                     g_self = self.backend.div(out.grad._data, other._data)
                     d_self = self.backend.unbroadcast(g_self, self.shape)
                     if self.grad is None:
@@ -454,7 +500,6 @@ class Tensor:
                     else:
                         self.grad._data = self.backend.add(self.grad._data, d_self)
                 if other.requires_grad:
-                    # d/db (a/b) = -a / (b^2)
                     b_sq = self.backend.mul(other._data, other._data)
                     neg_a = self.backend.neg(self._data)
                     deriv_b = self.backend.div(neg_a, b_sq)
@@ -479,15 +524,19 @@ class Tensor:
         out_data = self.backend.pow(self._data, float(exponent))
         out = Tensor(
             out_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op=f"**{exponent}",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
-                # d/dx (x^n) = n * x^(n-1)
                 deriv = self.backend.mul(
                     self.backend.pow(self._data, exponent - 1.0),
                     self.backend.from_data(float(exponent), dtype="float32")
@@ -505,13 +554,18 @@ class Tensor:
         out_data = self.backend.neg(self._data)
         out = Tensor(
             out_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="neg",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 d_self = self.backend.neg(out.grad._data)
                 if self.grad is None:
@@ -527,9 +581,11 @@ class Tensor:
         Generalized N-D Batched Matrix Multiplication with right-aligned batch broadcasting.
         """
         other = self._ensure_tensor_on_self_backend(other)
+        out_dtype = _promote_dtype(self.dtype, other.dtype)
         out_data = self.backend.matmul(self._data, other._data)
         out = Tensor(
             out_data,
+            dtype=out_dtype,
             requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="@",
@@ -538,12 +594,15 @@ class Tensor:
 
         s1, s2 = self.shape, other.shape
         r1, r2 = len(s1), len(s2)
+        saved_v_self = self._version
+        saved_v_other = other._version
 
         def _backward():
+            if self._version != saved_v_self or other._version != saved_v_other:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if out.grad is None:
                 return
 
-            # Case 1: 1D @ 1D -> scalar output
             if r1 == 1 and r2 == 1:
                 if self.requires_grad:
                     d_self = other._data if out.grad.shape == () else self.backend.mul(out.grad._data, other._data)
@@ -553,14 +612,11 @@ class Tensor:
                     other._accumulate_grad_data(d_other)
                 return
 
-            # Promote operands to 2D+ for derivative computation
-            # Grad G of shape out.shape
             G = out.grad
             A = self
             B = other
 
             if r1 == 1:
-                # A was (K,) -> promoted to (1, K)
                 A_prom = A.reshape(1, s1[0])
                 G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
             else:
@@ -568,16 +624,12 @@ class Tensor:
                 G_prom = G
 
             if r2 == 1:
-                # B was (K,) -> promoted to (K, 1)
                 B_prom = B.reshape(s2[0], 1)
                 if r1 > 1:
                     G_prom = G.reshape(*G.shape, 1)
             else:
                 B_prom = B
 
-            # dA_prom = G_prom @ B_prom^T
-            # dB_prom = A_prom^T @ G_prom
-            # Transpose last 2 axes
             b_ndim = B_prom.ndim
             b_axes = list(range(b_ndim))
             b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
@@ -615,6 +667,7 @@ class Tensor:
         sum_data = self.backend.sum(self._data, axis=norm_axes, keepdims=keepdims)
         out = Tensor(
             sum_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="sum",
@@ -622,7 +675,11 @@ class Tensor:
         )
 
         orig_shape = self.shape
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 if not keepdims:
                     pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
@@ -630,7 +687,6 @@ class Tensor:
                 else:
                     grad_reshaped = out.grad._data
 
-                # Expand along reduced axes
                 ones_data = self.backend.ones(orig_shape)
                 d_self = self.backend.mul(ones_data, grad_reshaped)
                 if self.grad is None:
@@ -650,6 +706,7 @@ class Tensor:
         max_data = self.backend.max(self._data, axis=norm_axes, keepdims=keepdims)
         out = Tensor(
             max_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="max",
@@ -657,7 +714,11 @@ class Tensor:
         )
 
         orig_shape = self.shape
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 if not keepdims:
                     pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
@@ -667,18 +728,15 @@ class Tensor:
                     grad_reshaped = out.grad._data
                     max_reshaped = out._data
 
-                # Broadcast to orig_shape
                 ones_data = self.backend.ones(orig_shape)
                 b_grad = self.backend.mul(ones_data, grad_reshaped)
                 b_max = self.backend.mul(ones_data, max_reshaped)
 
-                # Mask where self._data == max_val
                 flat_x = self.backend.to_flat_list(self._data)
                 flat_max = self.backend.to_flat_list(b_max)
                 flat_g = self.backend.to_flat_list(b_grad)
 
-                # Route gradient to maximum values (subgradient)
-                d_flat = [g if abs(x - m) < 1e-6 else 0.0 for x, m, g in zip(flat_x, flat_max, flat_g)]
+                d_flat = [g if x == m else 0.0 for x, m, g in zip(flat_x, flat_max, flat_g)]
                 d_self = self.backend.from_data(self.backend.reshape(d_flat, orig_shape), dtype="float32")
                 self._accumulate_grad_data(d_self)
 
@@ -696,15 +754,19 @@ class Tensor:
         exp_data = self.backend.exp(self._data)
         out = Tensor(
             exp_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="exp",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
-                # d(exp(x))/dx = exp(x)
                 d_self = self.backend.mul(out._data, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
@@ -716,15 +778,19 @@ class Tensor:
         sqrt_data = self.backend.sqrt(self._data)
         out = Tensor(
             sqrt_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="sqrt",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
-                # d(sqrt(x))/dx = 0.5 / sqrt(x + eps)
                 safe_out = self.backend.add(out._data, self.backend.from_data(eps, dtype="float32"))
                 inv_two_sqrt = self.backend.div(self.backend.from_data(0.5, dtype="float32"), safe_out)
                 d_self = self.backend.mul(inv_two_sqrt, out.grad._data)
@@ -738,13 +804,18 @@ class Tensor:
         log_data = self.backend.log(self._data)
         out = Tensor(
             log_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="log",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 inv_x = self.backend.div(self.backend.ones(self.shape), self._data)
                 d_self = self.backend.mul(inv_x, out.grad._data)
@@ -757,13 +828,18 @@ class Tensor:
         relu_data = self.backend.relu(self._data)
         out = Tensor(
             relu_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="relu",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 flat_data = self.backend.to_flat_list(self._data)
                 flat_grad = self.backend.to_flat_list(out.grad._data)
@@ -778,13 +854,18 @@ class Tensor:
         sig_data = self.backend.sigmoid(self._data)
         out = Tensor(
             sig_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="sigmoid",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 one = self.backend.ones(self.shape)
                 one_minus_sig = self.backend.sub(one, out._data)
@@ -799,13 +880,18 @@ class Tensor:
         tanh_data = self.backend.tanh(self._data)
         out = Tensor(
             tanh_data,
+            dtype="float32",
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="tanh",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 one = self.backend.ones(self.shape)
                 tanh_sq = self.backend.mul(out._data, out._data)
@@ -820,13 +906,18 @@ class Tensor:
         clamped_data = self.backend.clamp(self._data, min_val, max_val)
         out = Tensor(
             clamped_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="clamp",
             backend=self.backend
         )
 
+        saved_v = self._version
+
         def _backward():
+            if self._version != saved_v:
+                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
                 flat_x = self.backend.to_flat_list(self._data)
                 mask = [1.0 if ((min_val is None or v >= min_val) and (max_val is None or v <= max_val)) else 0.0 for v in flat_x]
@@ -855,7 +946,6 @@ class Tensor:
         log_sum = sum_exp.log()
         out = m + log_sum
         if not keepdims:
-            # Squeeze reduced axis
             ndim = self.ndim
             norm_axis = axis + ndim if axis < 0 else axis
             new_shape = tuple(self.shape[i] for i in range(ndim) if i != norm_axis)
@@ -879,7 +969,6 @@ class Tensor:
         """
         Computes the gradient of current tensor w.r.t. graph leaves using iterative DFS.
         """
-        # Iterative topological sort to prevent RecursionError on deep graphs
         topo: List['Tensor'] = []
         visited: Set[int] = set()
         stack: List[Tuple['Tensor', bool]] = [(self, False)]
@@ -898,7 +987,6 @@ class Tensor:
                     if id(child) not in visited:
                         stack.append((child, False))
 
-        # Seed the output gradient
         if gradient is None:
             if self.shape == ():
                 self.grad = Tensor(1.0, dtype="float32", backend=self.backend)
@@ -914,7 +1002,6 @@ class Tensor:
                 )
             self.grad = grad_tensor
 
-        # Traverse DAG in reverse topological order
         for node in reversed(topo):
             node._backward()
 

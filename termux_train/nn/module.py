@@ -118,24 +118,44 @@ class Module:
         return state
 
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
-        """Copies parameters from state_dict into this module and its descendants."""
+        """
+        Copies parameters from state_dict into this module and its descendants with atomic 2-phase commit.
+        If any validation error or shape mismatch occurs, NO parameters are modified.
+        """
         named_params = dict(self.named_parameters())
         
+        if strict:
+            unexpected = set(state_dict.keys()) - set(named_params.keys())
+            if unexpected:
+                raise KeyError(f"Unexpected key(s) in state_dict: {unexpected}")
+            missing = set(named_params.keys()) - set(state_dict.keys())
+            if missing:
+                raise KeyError(f"Missing key(s) in state_dict: {missing}")
+
+        # Phase 1: Validation and staging
+        staged_updates: Dict[str, Any] = {}
         for name, data in state_dict.items():
             if name in named_params:
                 param = named_params[name]
-                new_data = param.backend.from_data(data)
+                new_data = param.backend.from_data(data, dtype=param.dtype)
                 new_shape = param.backend.get_shape(new_data)
                 if new_shape != param.shape:
                     raise RuntimeError(f"Shape mismatch for parameter '{name}': expected {param.shape}, got {new_shape}")
-                param._data = new_data
+                staged_updates[name] = new_data
             elif strict:
                 raise KeyError(f"Unexpected key '{name}' in state_dict")
-                
-        if strict:
-            missing = set(named_params.keys()) - set(state_dict.keys())
-            if missing:
-                raise KeyError(f"Missing keys in state_dict: {missing}")
+
+        # Phase 2: Atomic commit with rollback safety
+        old_data: Dict[str, Any] = {}
+        try:
+            for name, new_data in staged_updates.items():
+                param = named_params[name]
+                old_data[name] = param._data
+                param._data = new_data
+        except Exception as commit_err:
+            for name, prev in old_data.items():
+                named_params[name]._data = prev
+            raise RuntimeError(f"Failed to commit state_dict atomically: {commit_err}") from commit_err
 
     def __repr__(self) -> str:
         lines = [f"{type(self).__name__}("]

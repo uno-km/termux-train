@@ -143,11 +143,19 @@ class Optimizer:
         pending_param_data: Dict[int, Any],
         pending_state: Dict[int, Dict[str, Any]],
     ) -> None:
-        """Applies all computed and verified updates across all parameters in a single atomic transaction."""
-        for index, new_data in pending_param_data.items():
-            self.params[index]._data = new_data
-
-        self.state = pending_state
+        """Applies all computed and verified updates across all parameters in a single atomic transaction with rollback."""
+        old_param_data: Dict[int, Any] = {}
+        old_state = self.state
+        try:
+            for index, new_data in pending_param_data.items():
+                old_param_data[index] = self.params[index]._data
+                self.params[index]._data = new_data
+            self.state = pending_state
+        except Exception as commit_err:
+            for index, prev_data in old_param_data.items():
+                self.params[index]._data = prev_data
+            self.state = old_state
+            raise RuntimeError(f"Optimizer commit failed, rolled back to previous state: {commit_err}") from commit_err
 
     def zero_grad(self, set_to_none: bool = True) -> None:
         """

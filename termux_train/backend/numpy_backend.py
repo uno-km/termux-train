@@ -94,7 +94,7 @@ class NumPyBackend(BaseBackend):
         return np.multiply(a, b)
 
     def div(self, a: Any, b: Any) -> Any:
-        return np.divide(a, np.where(b == 0, 1e-12, b))
+        return np.divide(a, b)
 
     def pow(self, a: Any, exp: float) -> Any:
         return np.power(a, exp)
@@ -160,7 +160,7 @@ class NumPyBackend(BaseBackend):
         return np.clip(data, a_min, a_max)
 
     def log(self, data: Any) -> Any:
-        return np.log(np.maximum(1e-15, data))
+        return np.log(data)
 
     def take(self, data: Any, index: int, axis: int = 0) -> Any:
         return np.take(data, index, axis=axis)

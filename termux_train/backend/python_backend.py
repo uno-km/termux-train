@@ -258,7 +258,16 @@ class PythonBackend(BaseBackend):
         return _elementwise_binary(a, b, lambda x, y: x * y)
 
     def div(self, a: Any, b: Any) -> Any:
-        return _elementwise_binary(a, b, lambda x, y: x / y)
+        def _div(x: Any, y: Any) -> float:
+            fx, fy = float(x), float(y)
+            if fy == 0.0:
+                if fx > 0.0:
+                    return float('inf')
+                elif fx < 0.0:
+                    return float('-inf')
+                return float('nan')
+            return fx / fy
+        return _elementwise_binary(a, b, _div)
 
     def pow(self, a: Any, exp: float) -> Any:
         return _elementwise_unary(a, lambda x: x ** exp)
@@ -510,7 +519,14 @@ class PythonBackend(BaseBackend):
         return _elementwise_unary(data, _c)
 
     def log(self, data: Any) -> Any:
-        return _elementwise_unary(data, lambda x: math.log(max(1e-15, x)))
+        def _log(x: Any) -> float:
+            fx = float(x)
+            if fx < 0.0:
+                return float('nan')
+            elif fx == 0.0:
+                return float('-inf')
+            return math.log(fx)
+        return _elementwise_unary(data, _log)
 
     def take(self, data: Any, index: int, axis: int = 0) -> Any:
         shape = _infer_shape(data)
