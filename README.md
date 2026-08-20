@@ -2,19 +2,39 @@
 > **Native On-Device Deep Learning & LoRA Training Framework for Android Termux**  
 > *Zero PyTorch Dependency · Pure Python Autograd Core · Pluggable NumPy Acceleration · Mobile-Resilient Runtime · On-Device LoRA · SafeTensors · RoPE Transformer*
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-00f5d4.svg)](https://uno-km.github.io/termux-train/)
-[![PyPI](https://img.shields.io/badge/PyPI-termux--train-informational.svg)](https://pypi.org/project/termux-train/)
-[![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Termux%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-green.svg)](https://termux.dev)
-[![Python](https://img.shields.io/badge/Python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-orange.svg)](https://www.python.org/)
+<div align="center">
+
+[![PyPI - Version](https://img.shields.io/pypi/v/termux-train.svg?color=0066cc&logo=pypi&logoColor=white)](https://pypi.org/project/termux-train/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/termux-train.svg?color=00f5d4&logo=pypi&logoColor=white)](https://pypi.org/project/termux-train/)
+[![PyPI - Total Downloads](https://img.shields.io/pepy/dt/termux-train.svg?color=blue&logo=pypi&logoColor=white)](https://pepy.tech/project/termux-train)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/termux-train.svg?logo=python&logoColor=white)](https://pypi.org/project/termux-train/)
+[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-00f5d4.svg?logo=github&logoColor=white)](https://uno-km.github.io/termux-train/)
 [![Audit Scorecard](https://img.shields.io/badge/Audit%20Scorecard-100.0%20%2F%20100.0%20(Grade%20A%2B)-brightgreen.svg)](scripts/run_audit_scoring.py)
-[![Tests](https://img.shields.io/badge/Tests-649%20Passed-success.svg)](tests/)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![AMEVA Foundation](https://img.shields.io/badge/AMEVA%20Foundation-Empowering%20Open%20Source-00f5d4.svg?logo=open-source-initiative&logoColor=white)](https://github.com/uno-km)
+
+</div>
 
 ---
 
-## 🌐 Official Documentation & Manual
-- **GitHub Pages Website**: [https://uno-km.github.io/termux-train/](https://uno-km.github.io/termux-train/)
-- **Tiny Model & Small LLM Training Manual**: [docs/tiny_model_training_guide.md](docs/tiny_model_training_guide.md)
+## 🏛️ Engineered by AMEVA Foundation (아메바 재단)
+
+`termux-train`은 **AMEVA Foundation(아메바 재단)**의 오픈소스 이니셔티브 하에 개발되었습니다.  
+AMEVA Foundation은 **빅테크의 클라우드 종속과 고비용 GPU 독점을 타파**하고, 전 세계 누구나 주머니 속 스마트폰(Android Termux)과 엣지 디바이스에서 **100% 무료로 AI를 학습·미세조정(LoRA)·추론**할 수 있는 온디바이스 AI 주권 기술을 연구·보급합니다.
+
+### 🌐 AMEVA On-Device Open-Source Ecosystem
+- 🎨 **[Termux-Diffusion](https://github.com/uno-km/termux-diffusion)**: Android Termux 네이티브 온디바이스 AI 이미지 생성 엔진
+- 🎭 **[Termux-Playwright](https://github.com/uno-km/termux-playwright-demo)**: 모바일 온디바이스 헤드리스 브라우저 자동화
+- 🎙️ **[Termux-STT](https://github.com/uno-km/termux-stt)**: 스마트폰 전용 로컬 음성인식 엔진
+- ⚡ **[AMEVA-Forge](https://github.com/uno-km/ameva-forge)**: 웹 표준 차세대 WebGPU 딥러닝 런타임
+- 📄 **[AMEVA-Doc-AI](https://github.com/uno-km/AMEVA-Doc-AI)**: 온디바이스 영수증·문서 정보 추출 엔진
+
+---
+
+## 🌐 Official Documentation & Live Manual
+- 📖 **Official GitHub Pages**: [https://uno-km.github.io/termux-train/](https://uno-km.github.io/termux-train/) *(6개 국어 다국어 지원)*
+- 📚 **On-Device Tiny Model & Small LLM Training Manual**: [docs/tiny_model_training_guide.md](docs/tiny_model_training_guide.md)
+- 📦 **Official PyPI Package**: [https://pypi.org/project/termux-train/](https://pypi.org/project/termux-train/)
 
 ---
 
@@ -53,8 +73,8 @@ termux-train check
 # Run 0-point baseline granular audit scorecard:
 termux-train score
 
-# Run any canonical demo (1 through 8):
-termux-train demo 7  # Character-level Transformer LM with RoPE
+# Run any canonical demo (1 through 9):
+termux-train demo 9  # Tiny Whisper Speech-to-Text LoRA Fine-Tuning
 ```
 
 ---
@@ -150,6 +170,7 @@ checkpoint.load_lora_adapter(student, "lora_adapter.safetensors")
 | `06_lora_adapter_training.py` | **LoRA Adapter Fine-Tuning** | Parameter freezing, low-rank adaptation, weight merge |
 | `07_transformer_lm.py` | **Character-Level Transformer LM** | RoPE Transformer trained on Shakespeare corpus |
 | `08_docfold_trainer.py` | **DocFold Sequence Mapping** | Structured document entity extraction & token generation |
+| `09_tiny_whisper_lora.py` | **Tiny Whisper LoRA Fine-Tuning** | Audio 80-mel feature Speech-to-Text LoRA training (<30KB) |
 
 ---
 
@@ -163,7 +184,7 @@ checkpoint.load_lora_adapter(student, "lora_adapter.safetensors")
   ⭐ Baseline: 0.0 Points | Target: 100.0 Points
 ======================================================================
   🏆 AUDIT SCORECARD: 100.0 / 100.0 POINTS (PERFECT GRADE A+)
-  ⏱️ Total Audit Execution Time: 21.03s
+  ⏱️ Total Audit Execution Time: 18.43s
   ✅ Pillar 1 (Autograd & Math Stability)     : 20.0 / 20.0 pts
   ✅ Pillar 2 (Transformer & RoPE)           : 20.0 / 20.0 pts
   ✅ Pillar 3 (Memory & Allocation Safety)   : 20.0 / 20.0 pts
@@ -190,28 +211,12 @@ termux-train/
 │   ├── runtime/              # MobileTrainer orchestrator & atomic rollback recovery
 │   ├── tokenization/         # Pure-Python Lightweight Tokenizers (Base, Char, Byte, Word)
 │   └── utils/                # Termux Environment Diagnostics, Numerical Gradcheck
-├── .github/workflows/        # Multi-Platform CI Workflow (Ubuntu, Windows, macOS, Python 3.8-3.12)
-├── docs/                     # Architectural boundaries, Definition of Done, specifications
-├── examples/                 # 8 Canonical Demos (01_tensor_basics.py ~ 08_docfold_trainer.py)
+├── .github/workflows/        # Multi-Platform CI & GitHub Pages Deployment
+├── docs/                     # Official 6-Language GitHub Pages Documentation Website
+├── examples/                 # 9 Canonical Demos (01_tensor_basics.py ~ 09_tiny_whisper_lora.py)
 ├── scripts/                  # 0-point audit scoring runner, source code exporter
 └── tests/                    # 649 unit, integration, mobile, and scorecard test suites
 ```
-
----
-
-## 🗺️ Sprint Roadmap (Scrum Tracked)
-
-- [x] **Sprint 0**: Governance, Environment Setup & Termux Diagnostics (`SCRUM-262` ~ `SCRUM-267`)
-- [x] **Sprint 1**: Pluggable Backend & Tensor Core (`SCRUM-268` ~ `SCRUM-274`)
-- [x] **Sprint 2**: Dynamic DAG Autograd Engine & Gradcheck (`SCRUM-275` ~ `SCRUM-286`)
-- [x] **Sprint 3**: NN Mini Framework & Linear Layers (`SCRUM-287` ~ `SCRUM-295`)
-- [x] **Sprint 4**: Optimizers (`SGD`, `Adam`, `AdamW`) & XOR Convergence MVP (`SCRUM-296` ~ `SCRUM-300`)
-- [x] **Sprint 5**: Mobile Training Runtime & Safe Checkpointing (`SCRUM-301` ~ `SCRUM-307`)
-- [x] **Sprint 6**: On-Device LoRA Adapter & Lightweight Serialization (`SCRUM-308` ~ `SCRUM-312`)
-- [x] **Sprint 7**: Tiny Transformer, RoPE, KV Cache, SafeTensors & DocFold (`SCRUM-313` ~ `SCRUM-319`)
-- [x] **Sprint 8**: Production Hardening & 0-Point Baseline Granular Scoring Protocol
-- [x] **Sprint 9**: Packaging (`pyproject.toml`), CLI (`termux-train`), Multi-Platform CI & v0.1.0-alpha Release (`SCRUM-320` ~ `SCRUM-325`)
-- [ ] **Sprint 10+**: C / ARM NEON SIMD Acceleration & Hardware Research (`SCRUM-326` ~ `SCRUM-331`)
 
 ---
 

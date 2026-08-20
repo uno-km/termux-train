@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mobile Memory & INT8 | termux-train</title>
     <meta name="description" content="Mobile memory management, MMap streaming, and INT8 quantization">
-    <meta name="keywords" content="termux-train, on-device training, android deep learning, autograd pure python, lora on device, bionic arm64, snapdragon ai, mobile transformer, rope kv cache, safetensors mobile">
-    <meta name="author" content="uno-km">
+    <meta name="keywords" content="termux-train, pypi, on-device training, android deep learning, autograd pure python, lora on device, bionic arm64, snapdragon ai, mobile transformer, rope kv cache, safetensors mobile, ameva foundation">
+    <meta name="author" content="AMEVA Foundation &amp; uno-km">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
     <link rel="canonical" href="https://uno-km.github.io/termux-train/">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -17,7 +17,7 @@
     <meta property="og:description" content="Mobile memory management, MMap streaming, and INT8 quantization">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://uno-km.github.io/termux-train/">
-    <meta property="og:site_name" content="termux-train">
+    <meta property="og:site_name" content="termux-train (AMEVA Foundation)">
     <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
 
     <!-- Twitter Card Metadata -->
@@ -31,6 +31,10 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "termux-train",
+      "author": {
+        "@type": "Organization",
+        "name": "AMEVA Foundation"
+      },
       "operatingSystem": "Android, Linux, Windows, macOS",
       "applicationCategory": "DeveloperApplication",
       "offers": {
@@ -52,19 +56,19 @@
             <h1 data-i18n="common.brand">termux-train</h1>
         </a>
         <div class="header-controls">
-            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0 (Native)</span>
+            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0 (Official Release)</span>
             <div class="lang-selector-wrapper">
-                <select class="lang-select" onchange="if(window.i18nManager) window.i18nManager.setLanguage(this.value); else if(window.I18n) window.I18n.setLanguage(this.value)">
+                <select class="lang-select" onchange="if(window.I18n) window.I18n.setLanguage(this.value)">
                     <option value="en">🇺🇸 English</option>
                     <option value="ko">🇰🇷 한국어</option>
                     <option value="ja">🇯🇵 日本語</option>
                     <option value="zh">🇨🇳 简体中文</option>
                     <option value="es">🇪🇸 Español</option>
-                    <option value="de">🇩🇪 Deutsch</option>
+                    <option value="hi">🇮🇳 हिन्दी</option>
                 </select>
             </div>
             <a href="https://pypi.org/project/termux-train/" target="_blank" class="header-btn" data-i18n="common.pypiBtn">PyPI (pip)</a>
-            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub</a>
+            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub Repository</a>
         </div>
     </header>
     <div class="container">
@@ -72,11 +76,8 @@
             <h3 data-i18n="common.nav.overview">Overview</h3>
             <ul>
                 <li><a href="index.html" data-i18n="common.nav.home">Home / Architecture</a></li>
-                <li><a href="installation.html" data-i18n="common.nav.installation">Installation Guide</a></li>
+                <li><a href="installation.html" data-i18n="common.nav.installation">Installation Guide (pip)</a></li>
                 <li><a href="quickstart.html" data-i18n="common.nav.quickstart">Quickstart & Recipes</a></li>
-            </ul>
-            <h3 data-i18n="common.nav.reference">Official Reference</h3>
-            <ul>
                 <li><a href="models.html" data-i18n="common.nav.models">Tiny Models & LoRA Hub</a></li>
                 <li><a href="training-guide.html" data-i18n="common.nav.guide">Training Manual & Recipes</a></li>
                 <li><a href="api-reference.html" data-i18n="common.nav.apiReference">100% Full API Reference</a></li>
@@ -84,17 +85,17 @@
                 <li><a href="benchmarks.html" data-i18n="common.nav.benchmarks">Benchmarks & Hardware</a></li>
                 <li><a href="versions.html" data-i18n="common.nav.versions">Version Archive</a></li>
             </ul>
-            <h3 data-i18n="common.nav.aiSpecs">AI Agent Protocol &amp; Feeds</h3>
+            <h3 data-i18n="common.nav.advanced">AI Agent Protocol &amp; Feeds</h3>
             <ul>
                 <li><a href="llms.txt" target="_blank">llms.txt (AI Agent Context)</a></li>
-                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Spec)</a></li>
-                <li><a href="robots.txt" target="_blank">robots.txt (AI Crawlers)</a></li>
-                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Sitemap)</a></li>
+                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Architecture Spec)</a></li>
+                <li><a href="rss.xml" target="_blank">rss.xml (Crawler News Feed)</a></li>
+                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Search Sitemap)</a></li>
             </ul>
         </nav>
         <main class="content">
             <h2 data-i18n="advancedParams.title">Mobile Memory Management &amp; INT8 Quantization</h2>
-            <p class="subtitle" data-i18n="advancedParams.subtitle">Guidelines for MMap disk streaming, SafeTensors zero-copy serialization, and LMK defense.</p>
+            <p class="lead" data-i18n="advancedParams.subtitle">Guidelines for MMap disk streaming, SafeTensors zero-copy serialization, and LMK defense.</p>
 
             <h3>1. SafeTensors Zero-Copy Binary Architecture</h3>
             <p>Traditional PyTorch Python pickling creates duplicate memory copies. SafeTensors maps contiguous binary buffers directly to memory:</p>
@@ -123,7 +124,10 @@ x, target = dataset[0]  # Instant zero-allocation slice</code></pre>
         </main>
     </div>
     <footer>
-        <div style="margin-bottom: 8px; font-size: 0.85em; opacity: 0.85;">
+        <div style="margin-bottom: 10px; font-size: 0.88em; color: var(--primary-color);">
+            🏛️ <strong>Engineered by AMEVA Foundation (아메바 재단)</strong> — Democratizing On-Device AI Sovereignty for Everyone.
+        </div>
+        <div style="margin-bottom: 8px; font-size: 0.82em; opacity: 0.85;">
             <strong>Disclaimer:</strong> termux-train is an independent open-source project developed for the Android Termux environment and is not officially affiliated with, endorsed by, or sponsored by the Termux project, PyTorch, or Meta.
         </div>
         <span data-i18n="common.footerText">&copy; 2026 termux-train Project (uno-km). Released under Apache License 2.0.</span>
