@@ -3,10 +3,18 @@
 > *Zero PyTorch Dependency · Pure Python Autograd Core · Pluggable NumPy Acceleration · Mobile-Resilient Runtime · On-Device LoRA · SafeTensors · RoPE Transformer*
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-00f5d4.svg)](https://uno-km.github.io/termux-train/)
+[![PyPI](https://img.shields.io/badge/PyPI-termux--train-informational.svg)](https://pypi.org/project/termux-train/)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Termux%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-green.svg)](https://termux.dev)
 [![Python](https://img.shields.io/badge/Python-3.8%20%7C%203.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-orange.svg)](https://www.python.org/)
 [![Audit Scorecard](https://img.shields.io/badge/Audit%20Scorecard-100.0%20%2F%20100.0%20(Grade%20A%2B)-brightgreen.svg)](scripts/run_audit_scoring.py)
 [![Tests](https://img.shields.io/badge/Tests-649%20Passed-success.svg)](tests/)
+
+---
+
+## 🌐 Official Documentation & Manual
+- **GitHub Pages Website**: [https://uno-km.github.io/termux-train/](https://uno-km.github.io/termux-train/)
+- **Tiny Model & Small LLM Training Manual**: [docs/tiny_model_training_guide.md](docs/tiny_model_training_guide.md)
 
 ---
 
@@ -22,12 +30,15 @@ While standard mobile ML frameworks (TFLite, ONNX Runtime Mobile, ExecuTorch, NC
 
 ## 🚀 5-Minute Quickstart
 
-### 1. Installation on Android Termux
+### 1. Installation via PyPI
 
 ```bash
-# In Android Termux:
+# A. In Android Termux (Native with OpenBLAS C-Acceleration):
 pkg update && pkg install python python-numpy git
 pip install termux-train
+
+# B. Standard Linux / macOS / Windows:
+pip install termux-train[accelerated]
 ```
 
 ### 2. CLI Diagnostics & Self-Test

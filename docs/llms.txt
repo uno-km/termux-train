@@ -1,0 +1,37 @@
+# termux-train (AMEVA-Termux)
+> Native On-Device Deep Learning & LoRA Training Framework for Android Termux
+
+## Core Overview
+`termux-train` is a lightweight, zero-dependency deep learning and automatic differentiation (Autograd) training framework engineered specifically for Android Termux and edge devices. It enables on-device backpropagation, RoPE Transformers, and LoRA fine-tuning directly on smartphone hardware without requiring heavy PyTorch binaries or PRoot Linux virtualization.
+
+## Distribution & Installation
+- **PyPI Package**: `pip install termux-train`
+- **Optional C Acceleration**: `pip install termux-train[accelerated]` (NumPy)
+- **Termux Native**: `pkg update && pkg install python python-numpy && pip install termux-train`
+
+## Key Architecture
+1. **Core Autograd (`termux_train.Tensor`)**: Pure-Python dynamic computation graph with reverse-mode DAG autograd.
+2. **Pluggable Backends**: `PythonBackend` (zero dependencies) and `NumPyBackend` (C-level OpenBLAS vectorization).
+3. **Neural Network Layers (`termux_train.nn`)**: `Linear`, `LoRALinear`, `Embedding`, `LayerNorm`, `MultiHeadAttention`, `TransformerBlock`, `TinyTransformerLM`.
+4. **Optimizers (`termux_train.optim`)**: `SGD` (Momentum, Nesterov), `Adam`, `AdamW`.
+5. **Modern Checkpointing (`termux_train.checkpoint`)**: HuggingFace-compatible `.safetensors` binary zero-copy, lightweight LoRA adapter serialization (<100KB), atomic JSON.
+6. **Data Streaming (`termux_train.data`)**: `MMapTokenDataset` for streaming multi-GB token corpora directly from disk without filling RAM.
+
+## Canonical 10-Line Quickstart
+```python
+from termux_train import Tensor, nn, optim, checkpoint
+
+# Define model
+model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 2))
+optimizer = optim.AdamW(model.parameters(), lr=0.01)
+criterion = nn.CrossEntropyLoss()
+
+# Forward, backward, and step
+x = Tensor([[0.5] * 16])
+target = Tensor([1], dtype="int64")
+
+optimizer.zero_grad()
+loss = criterion(model(x), target)
+loss.backward()
+optimizer.step()
+```

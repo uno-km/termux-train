@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Reference | termux-train</title>
+  <meta name="description" content="Full API specification for termux-train">
+  <link rel="canonical" href="https://uno-km.github.io/termux-train/api-reference.html">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  
+  <!-- OpenGraph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://uno-km.github.io/termux-train/api-reference.html">
+  <meta property="og:title" content="API Reference | termux-train">
+  <meta property="og:description" content="Full API specification for termux-train">
+  <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="API Reference | termux-train">
+  <meta name="twitter:description" content="Full API specification for termux-train">
+
+  <!-- Schema.org JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "termux-train",
+    "operatingSystem": "Android, Linux, Windows, macOS",
+    "applicationCategory": "DeveloperApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0.00"
+    },
+    "description": "Full API specification for termux-train"
+  }
+  </script>
+
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="assets/i18n-translations.js"></script>
+  <script src="assets/i18n.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a href="index.html" class="brand">
+      <svg viewBox="0 0 100 100" width="28" height="28">
+        <circle cx="50" cy="50" r="36" stroke="#00f5d4" stroke-width="8" fill="none" />
+        <path d="M35 50 L46 62 L66 38" stroke="#00f5d4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      </svg>
+      <span data-i18n="brand.name">termux-train</span>
+      <span class="brand-tag">v0.1.0-alpha</span>
+    </a>
+    <div class="header-actions">
+      <select id="lang-selector" class="lang-select" aria-label="Language Selector">
+        <option value="en">🇺🇸 English</option>
+        <option value="ko">🇰🇷 한국어</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="zh">🇨🇳 简体中文</option>
+        <option value="es">🇪🇸 Español</option>
+        <option value="hi">🇮🇳 हिन्दी</option>
+      </select>
+      <button id="theme-toggle" class="theme-toggle" title="Toggle Dark/Light Mode">☀️</button>
+      <a href="https://github.com/uno-km/termux-train" target="_blank" class="icon-link" title="GitHub Repository">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </a>
+    </div>
+  </header>
+  <div class="layout-container">
+    <aside class="site-sidebar">
+      <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html" class="nav-link" data-i18n="nav.home">🏠 Overview</a>
+        <a href="installation.html" class="nav-link" data-i18n="nav.installation">📦 Installation (pip)</a>
+        <a href="quickstart.html" class="nav-link" data-i18n="nav.quickstart">⚡ 5-Min Quickstart</a>
+        <a href="models.html" class="nav-link" data-i18n="nav.models">🧠 Tiny Models & LoRA</a>
+        <a href="api-reference.html" class="nav-link active" data-i18n="nav.api">📖 API Reference</a>
+        <a href="benchmarks.html" class="nav-link" data-i18n="nav.benchmarks">📊 Benchmarks</a>
+        <a href="versions.html" class="nav-link" data-i18n="nav.versions">🏷️ Releases & Changelog</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">AI Agent Specifications</div>
+        <a href="llms.txt" class="nav-link" target="_blank">🤖 llms.txt (Context)</a>
+        <a href="llms-full.txt" class="nav-link" target="_blank">📑 llms-full.txt (Spec)</a>
+        <a href="sitemap.xml" class="nav-link" target="_blank">🗺️ sitemap.xml</a>
+        <a href="rss.xml" class="nav-link" target="_blank">📡 rss.xml</a>
+      </div>
+    </aside>
+    <main class="site-main">
+
+      <h1>📖 Full API Reference</h1>
+      <p style="color: var(--text-secondary); margin-bottom: 24px;">Complete specification of classes, layers, optimizers, and serialization formats.</p>
+
+      <h2>1. Core Tensor (`termux_train.Tensor`)</h2>
+      <table>
+        <tr><th>Method</th><th>Parameters</th><th>Description</th></tr>
+        <tr><td><code>Tensor(data, requires_grad=False)</code></td><td>data: list/ndarray</td><td>Creates a dynamic computation graph node.</td></tr>
+        <tr><td><code>backward()</code></td><td>-</td><td>Computes reverse-mode DAG gradients.</td></tr>
+        <tr><td><code>zero_grad()</code></td><td>set_to_none=True</td><td>Resets gradients to None for optimal mobile RAM usage.</td></tr>
+      </table>
+
+      <h2>2. Neural Network (`termux_train.nn`)</h2>
+      <table>
+        <tr><th>Class</th><th>Key Arguments</th><th>Description</th></tr>
+        <tr><td><code>nn.Linear</code></td><td>in_features, out_features, bias</td><td>Fully-connected linear layer.</td></tr>
+        <tr><td><code>nn.LoRALinear</code></td><td>in_features, out_features, rank, alpha</td><td>Low-Rank Adaptation parameter-efficient layer.</td></tr>
+        <tr><td><code>nn.Embedding</code></td><td>num_embeddings, embedding_dim</td><td>Lookup table for token embeddings.</td></tr>
+        <tr><td><code>nn.LayerNorm</code></td><td>normalized_shape, eps</td><td>Layer Normalization over channels.</td></tr>
+        <tr><td><code>nn.TinyTransformerLM</code></td><td>vocab_size, d_model, num_heads, d_ff, num_layers, pos_type</td><td>Complete Decoder Transformer with RoPE &amp; KV Cache.</td></tr>
+      </table>
+
+      <h2>3. Checkpointing (`termux_train.checkpoint`)</h2>
+      <table>
+        <tr><th>Function</th><th>Format</th><th>Description</th></tr>
+        <tr><td><code>save_safetensors(dict, path)</code></td><td>.safetensors</td><td>HuggingFace-compatible zero-copy binary serialization.</td></tr>
+        <tr><td><code>save_lora_adapter(model, path)</code></td><td>.safetensors / .json</td><td>Serializes low-rank matrices only (&lt;100KB).</td></tr>
+      </table>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <div>&copy; 2026 AMEVA Team &amp; uno-km. Released under Apache License 2.0.</div>
+    <div>Native On-Device Deep Learning for Android Termux.</div>
+  </footer>
+</body>
+</html>

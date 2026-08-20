@@ -1,0 +1,38 @@
+# termux-train Complete Technical & API Specification for AI Agents
+> Framework: termux-train (v0.1.0-alpha)
+> Repository: https://github.com/uno-km/termux-train
+> Docs: https://uno-km.github.io/termux-train/
+
+## 1. Module Exports & Symbols
+- `termux_train`:
+  - `Tensor(data, requires_grad=False, dtype='float32', backend=None)`
+  - `set_backend(name: str)`: "auto", "numpy", "python"
+  - `get_backend()` -> BaseBackend
+  - `available_backends()` -> List[str]
+  - Submodules: `nn`, `optim`, `checkpoint`, `runtime`, `data`, `tokenization`, `utils`
+
+## 2. Neural Network (`termux_train.nn`)
+- `nn.Module`: Base module with `_parameters`, `_modules`, `parameters()`, `named_parameters()`, `named_modules()`, `zero_grad()`, `train()`, `eval()`, `state_dict()`, `load_state_dict()`
+- `nn.Parameter(data, requires_grad=True)`
+- `nn.Linear(in_features, out_features, bias=True)`
+- `nn.LoRALinear(in_features, out_features, rank=4, alpha=8.0, bias=True)`
+  - `LoRALinear.from_linear(linear_module, rank=4, alpha=8.0)`
+  - `adapter_parameters()` -> List[Parameter]
+  - `merge()` / `unmerge()`
+- `nn.Embedding(num_embeddings, embedding_dim)`
+- `nn.LayerNorm(normalized_shape, eps=1e-5)`
+- `nn.RotaryEmbedding(dim, max_position_embeddings=2048, base=10000.0)`
+- `nn.MultiHeadAttention(d_model, num_heads, dropout=0.0)`
+- `nn.TransformerBlock(d_model, num_heads, d_ff, dropout=0.0)`
+- `nn.TinyTransformerLM(vocab_size, d_model, num_heads, d_ff, num_layers, pos_type="rope", tie_weights=True)`
+  - `generate(prompt_tokens, max_new_tokens=50, temperature=0.7, top_p=0.9, use_cache=True)`
+
+## 3. Checkpointing & I/O (`termux_train.checkpoint`)
+- `save_safetensors(tensors_dict, filepath, metadata=None)`
+- `load_safetensors(filepath)` -> Tuple[Dict[str, Tensor], Dict[str, str]]
+- `save_lora_adapter(model, filepath, adapter_name="default")`
+- `load_lora_adapter(model, filepath, strict=True)`
+
+## 4. Mobile Dataset & Streaming (`termux_train.data`)
+- `MMapTokenDataset.create_from_tokens(tokens, filepath, seq_len=64)`
+- `MMapTokenDataset(filepath, seq_len=64)`

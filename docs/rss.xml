@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>termux-train Releases &amp; Updates</title>
+    <link>https://uno-km.github.io/termux-train/</link>
+    <description>Native On-Device Deep Learning &amp; LoRA Training Framework for Android Termux</description>
+    <language>en-us</language>
+    <lastBuildDate>Thu, 20 Aug 2026 23:00:00 +0900</lastBuildDate>
+    <item>
+      <title>termux-train v0.1.0-alpha Released</title>
+      <link>https://uno-km.github.io/termux-train/versions.html</link>
+      <description>Initial public technical preview: Pure Python autograd, pluggable NumPy backend, SafeTensors zero-copy, LoRA adapters, RoPE Transformers, and 0-baseline audit scorecard.</description>
+      <pubDate>Thu, 20 Aug 2026 23:00:00 +0900</pubDate>
+    </item>
+  </channel>
+</rss>

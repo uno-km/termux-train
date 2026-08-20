@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overview | termux-train</title>
+  <meta name="description" content="Native On-Device Deep Learning & LoRA Training Framework for Android Termux">
+  <link rel="canonical" href="https://uno-km.github.io/termux-train/index.html">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  
+  <!-- OpenGraph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://uno-km.github.io/termux-train/index.html">
+  <meta property="og:title" content="Overview | termux-train">
+  <meta property="og:description" content="Native On-Device Deep Learning & LoRA Training Framework for Android Termux">
+  <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Overview | termux-train">
+  <meta name="twitter:description" content="Native On-Device Deep Learning & LoRA Training Framework for Android Termux">
+
+  <!-- Schema.org JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "termux-train",
+    "operatingSystem": "Android, Linux, Windows, macOS",
+    "applicationCategory": "DeveloperApplication",
+    "offers": {
+      "@type": "Offer",
+      "price": "0.00"
+    },
+    "description": "Native On-Device Deep Learning & LoRA Training Framework for Android Termux"
+  }
+  </script>
+
+  <link rel="stylesheet" href="assets/style.css">
+  <script src="assets/i18n-translations.js"></script>
+  <script src="assets/i18n.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a href="index.html" class="brand">
+      <svg viewBox="0 0 100 100" width="28" height="28">
+        <circle cx="50" cy="50" r="36" stroke="#00f5d4" stroke-width="8" fill="none" />
+        <path d="M35 50 L46 62 L66 38" stroke="#00f5d4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+      </svg>
+      <span data-i18n="brand.name">termux-train</span>
+      <span class="brand-tag">v0.1.0-alpha</span>
+    </a>
+    <div class="header-actions">
+      <select id="lang-selector" class="lang-select" aria-label="Language Selector">
+        <option value="en">🇺🇸 English</option>
+        <option value="ko">🇰🇷 한국어</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="zh">🇨🇳 简体中文</option>
+        <option value="es">🇪🇸 Español</option>
+        <option value="hi">🇮🇳 हिन्दी</option>
+      </select>
+      <button id="theme-toggle" class="theme-toggle" title="Toggle Dark/Light Mode">☀️</button>
+      <a href="https://github.com/uno-km/termux-train" target="_blank" class="icon-link" title="GitHub Repository">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+      </a>
+    </div>
+  </header>
+  <div class="layout-container">
+    <aside class="site-sidebar">
+      <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html" class="nav-link active" data-i18n="nav.home">🏠 Overview</a>
+        <a href="installation.html" class="nav-link" data-i18n="nav.installation">📦 Installation (pip)</a>
+        <a href="quickstart.html" class="nav-link" data-i18n="nav.quickstart">⚡ 5-Min Quickstart</a>
+        <a href="models.html" class="nav-link" data-i18n="nav.models">🧠 Tiny Models & LoRA</a>
+        <a href="api-reference.html" class="nav-link" data-i18n="nav.api">📖 API Reference</a>
+        <a href="benchmarks.html" class="nav-link" data-i18n="nav.benchmarks">📊 Benchmarks</a>
+        <a href="versions.html" class="nav-link" data-i18n="nav.versions">🏷️ Releases & Changelog</a>
+      </div>
+      <div class="nav-group">
+        <div class="nav-title">AI Agent Specifications</div>
+        <a href="llms.txt" class="nav-link" target="_blank">🤖 llms.txt (Context)</a>
+        <a href="llms-full.txt" class="nav-link" target="_blank">📑 llms-full.txt (Spec)</a>
+        <a href="sitemap.xml" class="nav-link" target="_blank">🗺️ sitemap.xml</a>
+        <a href="rss.xml" class="nav-link" target="_blank">📡 rss.xml</a>
+      </div>
+    </aside>
+    <main class="site-main">
+
+      <section class="hero">
+        <div class="hero-badges">
+          <span class="brand-tag" data-i18n="hero.badge">v0.1.0-alpha • PyPI Ready • 100/100 Score</span>
+        </div>
+        <h1 class="hero-title" data-i18n="hero.title">Native On-Device Deep Learning &amp; LoRA Training Framework</h1>
+        <p class="hero-subtitle" data-i18n="hero.subtitle">Zero-dependency pure Python Autograd core with pluggable NumPy acceleration. Train Transformers, Small LLMs, and Whisper LoRA natively on Android Termux.</p>
+        <div style="display: flex; gap: 12px; margin-bottom: 24px;">
+          <a href="installation.html" class="nav-link active" style="padding: 10px 20px; font-weight: 700;" data-i18n="btn.get_started">Get Started</a>
+          <a href="https://github.com/uno-km/termux-train" target="_blank" class="nav-link" style="padding: 10px 20px;" data-i18n="btn.view_github">GitHub Repo</a>
+        </div>
+      </section>
+
+      <h2 style="margin-bottom: 16px;" data-i18n="section.features">Key Capabilities</h2>
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-icon">⚡</div>
+          <div class="card-title" data-i18n="feat1.title">Pure Python Autograd</div>
+          <div class="card-desc" data-i18n="feat1.desc">Zero C++ dependency dynamic computation graph with reverse-mode DAG autograd.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🎯</div>
+          <div class="card-title" data-i18n="feat2.title">On-Device LoRA</div>
+          <div class="card-desc" data-i18n="feat2.desc">Freeze 96%+ base weights and fine-tune low-rank adapters with &lt;100KB footprint.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🧠</div>
+          <div class="card-title" data-i18n="feat3.title">RoPE &amp; KV Cache</div>
+          <div class="card-desc" data-i18n="feat3.desc">Modern Transformer with Rotary Position Embedding and O(1) step generation cache.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">💾</div>
+          <div class="card-title" data-i18n="feat4.title">SafeTensors Binary</div>
+          <div class="card-desc" data-i18n="feat4.desc">Zero-copy HuggingFace-compatible serialization eliminating mobile OOM crashes.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">📦</div>
+          <div class="card-title" data-i18n="feat5.title">MMap Data Streaming</div>
+          <div class="card-desc" data-i18n="feat5.desc">Stream multi-gigabyte token datasets directly from disk without filling phone RAM.</div>
+        </div>
+        <div class="card">
+          <div class="card-icon">🚀</div>
+          <div class="card-title" data-i18n="feat6.title">PyPI Distribution</div>
+          <div class="card-desc" data-i18n="feat6.desc">Install with single command 'pip install termux-train' across Android, Linux, Win, Mac.</div>
+        </div>
+      </div>
+
+      <h2 style="margin: 32px 0 16px;">10-Line Code Demo</h2>
+      <div class="code-container">
+  <div class="code-header">
+    <span>python</span>
+    <button class="copy-btn">Copy</button>
+  </div>
+  <pre><code>from termux_train import Tensor, nn, optim, set_backend
+
+# 1. Automatic C-acceleration (NumPy / OpenBLAS)
+set_backend("auto")
+
+# 2. Dynamic Autograd Tensor
+x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+w = Tensor([[2.0], [1.0]], requires_grad=True)
+
+# 3. Forward & Backward
+y = x @ w
+loss = (y * y).mean()
+loss.backward()
+
+print("dL/dw:", w.grad)</code></pre>
+</div>
+    </main>
+  </div>
+  <footer class="site-footer">
+    <div>&copy; 2026 AMEVA Team &amp; uno-km. Released under Apache License 2.0.</div>
+    <div>Native On-Device Deep Learning for Android Termux.</div>
+  </footer>
+</body>
+</html>
