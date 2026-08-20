@@ -12,7 +12,7 @@ class Module:
     """
     Base class for all neural network modules in termux-train.
     Provides PyTorch-compatible interface for parameter tracking, state serialization,
-    and train/eval mode toggling.
+    and train/eval mode toggling with deduplicated, cycle-guarded traversal.
     """
     
     def __init__(self):
@@ -60,29 +60,46 @@ class Module:
         else:
             self._parameters[name] = param
 
-    def parameters(self, recurse: bool = True) -> List[Parameter]:
-        """Returns an iterator or list over module parameters."""
-        params: List[Parameter] = []
-        for p in self._parameters.values():
-            if p is not None:
-                params.append(p)
-        if recurse:
-            for m in self._modules.values():
-                params.extend(m.parameters(recurse=True))
-        return params
+    def _walk_modules(self) -> Iterator[Tuple[str, 'Module']]:
+        """Unified, cycle-guarded and shared-submodule safe module graph walker."""
+        visited = set()
+        stack = [("", self)]
+        while stack:
+            prefix, module = stack.pop()
+            if id(module) in visited:
+                continue
+            visited.add(id(module))
+            yield prefix, module
+            for name, child in reversed(list(module._modules.items())):
+                if child is not None:
+                    child_prefix = f"{prefix}.{name}" if prefix else name
+                    stack.append((child_prefix, child))
 
     def named_parameters(self, prefix: str = "", recurse: bool = True) -> List[Tuple[str, Parameter]]:
-        """Returns a list of (name, parameter) tuples in the module."""
-        named_params = []
-        for name, p in self._parameters.items():
-            if p is not None:
-                full_name = f"{prefix}.{name}" if prefix else name
-                named_params.append((full_name, p))
-        if recurse:
-            for m_name, m in self._modules.items():
-                sub_prefix = f"{prefix}.{m_name}" if prefix else m_name
-                named_params.extend(m.named_parameters(prefix=sub_prefix, recurse=True))
+        """Returns a list of (name, parameter) tuples in the module with deduplication."""
+        seen_params = set()
+        named_params: List[Tuple[str, Parameter]] = []
+
+        if not recurse:
+            for name, p in self._parameters.items():
+                if p is not None and id(p) not in seen_params:
+                    seen_params.add(id(p))
+                    full_name = f"{prefix}.{name}" if prefix else name
+                    named_params.append((full_name, p))
+            return named_params
+
+        for mod_prefix, mod in self._walk_modules():
+            for name, p in mod._parameters.items():
+                if p is not None and id(p) not in seen_params:
+                    seen_params.add(id(p))
+                    eff_prefix = f"{prefix}.{mod_prefix}" if (prefix and mod_prefix) else (mod_prefix or prefix)
+                    full_name = f"{eff_prefix}.{name}" if eff_prefix else name
+                    named_params.append((full_name, p))
         return named_params
+
+    def parameters(self, recurse: bool = True) -> List[Parameter]:
+        """Returns an iterator or list over deduplicated module parameters."""
+        return [p for _, p in self.named_parameters(recurse=recurse)]
 
     def zero_grad(self, set_to_none: bool = True) -> None:
         """
@@ -96,10 +113,9 @@ class Module:
             p.zero_grad(set_to_none=set_to_none)
 
     def train(self, mode: bool = True) -> 'Module':
-        """Sets the module in training mode."""
-        self.training = mode
-        for m in self._modules.values():
-            m.train(mode)
+        """Sets the module and all submodules in training mode."""
+        for _, mod in self._walk_modules():
+            object.__setattr__(mod, "training", mode)
         return self
 
     def eval(self) -> 'Module':
@@ -120,7 +136,7 @@ class Module:
     def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
         """
         Copies parameters from state_dict into this module and its descendants with atomic 2-phase commit.
-        If any validation error or shape mismatch occurs, NO parameters are modified.
+        If any validation error or shape mismatch occurs, NO parameters are modified and rollback occurs.
         """
         named_params = dict(self.named_parameters())
         
@@ -145,16 +161,16 @@ class Module:
             elif strict:
                 raise KeyError(f"Unexpected key '{name}' in state_dict")
 
-        # Phase 2: Atomic commit with rollback safety
+        # Phase 2: Atomic commit with rollback safety and monotonic version bump
         old_data: Dict[str, Any] = {}
         try:
             for name, new_data in staged_updates.items():
                 param = named_params[name]
                 old_data[name] = param._data
-                param._data = new_data
+                param._replace_data(new_data, bump_version=True)
         except Exception as commit_err:
             for name, prev in old_data.items():
-                named_params[name]._data = prev
+                named_params[name]._replace_data(prev, bump_version=True)
             raise RuntimeError(f"Failed to commit state_dict atomically: {commit_err}") from commit_err
 
     def __repr__(self) -> str:

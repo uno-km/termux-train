@@ -149,11 +149,11 @@ class Optimizer:
         try:
             for index, new_data in pending_param_data.items():
                 old_param_data[index] = self.params[index]._data
-                self.params[index]._data = new_data
+                self.params[index]._replace_data(new_data, bump_version=True)
             self.state = pending_state
         except Exception as commit_err:
             for index, prev_data in old_param_data.items():
-                self.params[index]._data = prev_data
+                self.params[index]._replace_data(prev_data, bump_version=True)
             self.state = old_state
             raise RuntimeError(f"Optimizer commit failed, rolled back to previous state: {commit_err}") from commit_err
 

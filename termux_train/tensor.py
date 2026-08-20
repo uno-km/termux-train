@@ -10,10 +10,13 @@ no_grad context manager, and Transformer mathematical primitives.
 
 import functools
 import math
+from contextvars import ContextVar
 from typing import Any, Tuple, Set, List, Optional, Union, Callable
 from .backend import get_backend, BaseBackend
 
 VALID_DTYPES = {"float32", "int64", "bool"}
+
+_GRAD_ENABLED_VAR: ContextVar[bool] = ContextVar("termux_train_grad_enabled", default=True)
 
 def _promote_dtype(dt1: str, dt2: str) -> str:
     """Explicit type promotion rule matrix."""
@@ -89,22 +92,34 @@ def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Te
 
     return out
 
+def _attach_grad_fn(out: 'Tensor', parents: Tuple['Tensor', ...], backward_fn: Optional[Callable[[], None]]) -> None:
+    """Attach autograd closure only when out.requires_grad is True, preventing closure leaks in no_grad."""
+    if out.requires_grad and backward_fn is not None:
+        out._prev = set(parents)
+        out._backward = backward_fn
+        out._grad_fn_state = "live"
+    else:
+        out._prev = set()
+        out._backward = None
+        out._grad_fn_state = "leaf"
+
 
 class no_grad:
     """
     Context-manager and decorator that disables gradient calculation.
-    Reduces memory consumption for computation that would otherwise have requires_grad=True.
+    Thread-safe and async-safe via contextvars.
     """
     def __init__(self):
-        self.prev = True
+        self._token = None
 
     def __enter__(self):
-        self.prev = Tensor._grad_enabled
-        Tensor._grad_enabled = False
+        self._token = _GRAD_ENABLED_VAR.set(False)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        Tensor._grad_enabled = self.prev
+        if self._token is not None:
+            _GRAD_ENABLED_VAR.reset(self._token)
+            self._token = None
 
     def __call__(self, func):
         @functools.wraps(func)
@@ -117,11 +132,9 @@ class no_grad:
 class Tensor:
     """
     Core Tensor class supporting multi-dimensional arrays, pluggable backends,
-    multi-dtype representation (float32, int64, bool), in-place modification detection,
+    multi-dtype representation (float32, int64, bool), in-place version tracking,
     in-flight memory release on backward, and dynamic reverse-mode automatic differentiation.
     """
-
-    _grad_enabled: bool = True
 
     def __init__(
         self,
@@ -145,26 +158,35 @@ class Tensor:
             self.dtype = inferred
             self._data = self.backend.from_data(data, dtype=self.dtype)
 
-        effective_requires_grad = requires_grad and Tensor._grad_enabled
+        effective_requires_grad = requires_grad and _GRAD_ENABLED_VAR.get()
 
         if self.dtype in ("int64", "bool") and effective_requires_grad:
             raise ValueError(f"Only Tensors with floating point dtype can require gradients (got dtype='{self.dtype}')")
 
         self.requires_grad: bool = effective_requires_grad
         self.grad: Optional['Tensor'] = None
-        self._backward: Callable[[], None] = lambda: None
-        self._prev: Set['Tensor'] = set(_prev) if Tensor._grad_enabled else set()
+        self._backward: Optional[Callable[[], None]] = None
+        self._prev: Set['Tensor'] = set(_prev) if effective_requires_grad else set()
         self._op: str = _op
         self._version: int = 0
-        self._is_graph_freed: bool = False
+        self._grad_fn_state: str = "live" if (effective_requires_grad and _prev) else "leaf"
 
     @classmethod
     def is_grad_enabled(cls) -> bool:
-        return cls._grad_enabled
+        return _GRAD_ENABLED_VAR.get()
 
     @classmethod
     def set_grad_enabled(cls, mode: bool) -> None:
-        cls._grad_enabled = bool(mode)
+        _GRAD_ENABLED_VAR.set(bool(mode))
+
+    def _replace_data(self, value: Any, *, bump_version: bool = True) -> None:
+        """Atomic internal data replacement with monotonic version increment."""
+        if isinstance(value, Tensor):
+            self._data = self.backend.from_data(value.tolist(), dtype=self.dtype)
+        else:
+            self._data = self.backend.from_data(value, dtype=self.dtype)
+        if bump_version:
+            self._version += 1
 
     def _accumulate_grad_data(self, grad_data: Any) -> None:
         """Accumulate incoming raw gradient data into self.grad safely."""
@@ -198,11 +220,7 @@ class Tensor:
 
     @data.setter
     def data(self, value: Any) -> None:
-        self._version += 1
-        if isinstance(value, Tensor):
-            self._data = self.backend.from_data(value.tolist(), dtype=self.dtype)
-        else:
-            self._data = self.backend.from_data(value, dtype=self.dtype)
+        self._replace_data(value, bump_version=True)
 
     @property
     def shape(self) -> Tuple[int, ...]:
@@ -316,7 +334,7 @@ class Tensor:
                 d_self = backend.reshape(out.grad._data, orig_shape)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def flatten(self) -> 'Tensor':
@@ -369,7 +387,7 @@ class Tensor:
                 d_self = backend.transpose(out.grad._data, inv_axes)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def swapaxes(self, dim0: int, dim1: int) -> 'Tensor':
@@ -419,7 +437,7 @@ class Tensor:
                     d_other = backend.unbroadcast(out.grad._data, s_other)
                     other._accumulate_grad_data(d_other)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __radd__(self, other: Any) -> 'Tensor':
@@ -458,7 +476,7 @@ class Tensor:
                     d_other = backend.unbroadcast(neg_grad, s_other)
                     other._accumulate_grad_data(d_other)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rsub__(self, other: Any) -> 'Tensor':
@@ -499,7 +517,7 @@ class Tensor:
                     d_other = backend.unbroadcast(g_other, s_other)
                     other._accumulate_grad_data(d_other)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rmul__(self, other: Any) -> 'Tensor':
@@ -541,7 +559,7 @@ class Tensor:
                     d_other = backend.unbroadcast(g_other, s_other)
                     other._accumulate_grad_data(d_other)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rtruediv__(self, other: Any) -> 'Tensor':
@@ -576,7 +594,7 @@ class Tensor:
                 d_self = backend.mul(deriv, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def __neg__(self) -> 'Tensor':
@@ -600,7 +618,7 @@ class Tensor:
                 d_self = backend.neg(out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
@@ -631,11 +649,12 @@ class Tensor:
                 return
 
             if r1 == 1 and r2 == 1:
+                grad_data = out.grad._data
                 if self.requires_grad:
-                    d_self = other._data if out.grad.shape == () else self.backend.mul(out.grad._data, other._data)
+                    d_self = self.backend.mul(grad_data, other._data)
                     self._accumulate_grad_data(d_self)
                 if other.requires_grad:
-                    d_other = self._data if out.grad.shape == () else self.backend.mul(out.grad._data, self._data)
+                    d_other = self.backend.mul(grad_data, self._data)
                     other._accumulate_grad_data(d_other)
                 return
 
@@ -685,7 +704,7 @@ class Tensor:
                     dB_final = dB_unbroadcast
                 other._accumulate_grad_data(dB_final._data)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def sum(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
@@ -719,12 +738,12 @@ class Tensor:
                 d_self = backend.mul(ones_data, grad_reshaped)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def max(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
         """
-        Maximum reduction along specified axes with subgradient autograd routing.
+        Maximum reduction along specified axes with subgradient mass conservation across tied maximums.
         """
         ndim = self.ndim
         norm_axes = _normalize_axes(axis, ndim)
@@ -762,11 +781,21 @@ class Tensor:
                 flat_max = backend.to_flat_list(b_max)
                 flat_g = backend.to_flat_list(b_grad)
 
-                d_flat = [g if x == m else 0.0 for x, m, g in zip(flat_x, flat_max, flat_g)]
+                # 1. Indicator mask for tied maximums
+                mask_flat = [1.0 if x == m else 0.0 for x, m in zip(flat_x, flat_max)]
+                mask_data = backend.from_data(backend.reshape(mask_flat, orig_shape), dtype="float32")
+
+                # 2. Count tied maximums along reduction axes
+                k_data = backend.sum(mask_data, axis=norm_axes, keepdims=True)
+                k_broadcast = backend.mul(ones_data, k_data)
+                flat_k = backend.to_flat_list(k_broadcast)
+
+                # 3. Equidistribute subgradient mass: g / k
+                d_flat = [(g / k_val) if m_val > 0.0 else 0.0 for g, m_val, k_val in zip(flat_g, mask_flat, flat_k)]
                 d_self = backend.from_data(backend.reshape(d_flat, orig_shape), dtype="float32")
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def mean(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
@@ -797,10 +826,10 @@ class Tensor:
                 d_self = backend.mul(out._data, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
-    def sqrt(self, eps: float = 1e-8) -> 'Tensor':
+    def sqrt(self) -> 'Tensor':
         """Elementwise square root sqrt(x)."""
         sqrt_data = self.backend.sqrt(self._data)
         out = Tensor(
@@ -819,12 +848,11 @@ class Tensor:
             if self._version != saved_v:
                 raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
             if self.requires_grad and out.grad is not None:
-                safe_out = backend.add(out._data, backend.from_data(eps, dtype="float32"))
-                inv_two_sqrt = backend.div(backend.from_data(0.5, dtype="float32"), safe_out)
+                inv_two_sqrt = backend.div(backend.from_data(0.5, dtype="float32"), out._data)
                 d_self = backend.mul(inv_two_sqrt, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def log(self) -> 'Tensor':
@@ -850,7 +878,7 @@ class Tensor:
                 d_self = backend.mul(inv_x, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def relu(self) -> 'Tensor':
@@ -877,7 +905,7 @@ class Tensor:
                 d_self = backend.from_data(backend.reshape(d_flat, self.shape), dtype="float32")
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def sigmoid(self) -> 'Tensor':
@@ -904,7 +932,7 @@ class Tensor:
                 d_self = backend.mul(deriv, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def tanh(self) -> 'Tensor':
@@ -931,7 +959,7 @@ class Tensor:
                 d_self = backend.mul(deriv, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def clamp(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
@@ -958,7 +986,7 @@ class Tensor:
                 d_self = backend.mul(mask_data, out.grad._data)
                 self._accumulate_grad_data(d_self)
 
-        out._backward = _backward
+        _attach_grad_fn(out, (self,), _backward)
         return out
 
     def clip(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
@@ -1008,12 +1036,23 @@ class Tensor:
         Computes the gradient of current tensor w.r.t. graph leaves using iterative DFS.
         Releases intermediate graph references and closures in-flight when retain_graph=False.
         """
-        if self._is_graph_freed:
+        if not self.requires_grad and self._backward is None:
+            if self._grad_fn_state == "freed":
+                raise RuntimeError(
+                    "Trying to backward through the graph a second time, but the saved intermediate variables "
+                    "have already been freed. Specify retain_graph=True when calling .backward() if you need "
+                    "to backward through the graph more than once."
+                )
+            return
+
+        if self._grad_fn_state == "freed":
             raise RuntimeError(
                 "Trying to backward through the graph a second time, but the saved intermediate variables "
                 "have already been freed. Specify retain_graph=True when calling .backward() if you need "
                 "to backward through the graph more than once."
             )
+        if self._grad_fn_state == "invalid":
+            raise RuntimeError("Cannot backward through an invalid/poisoned computation graph.")
 
         topo: List['Tensor'] = []
         visited: Set[int] = set()
@@ -1053,16 +1092,26 @@ class Tensor:
                 )
             self.grad = grad_tensor
 
-        for node in reversed(topo):
-            node._backward()
-            if not retain_graph and node is not self:
-                node._prev.clear()
-                node._backward = lambda: None
+        all_nodes = list(topo)
+        try:
+            for i in range(len(topo) - 1, -1, -1):
+                node = topo[i]
+                if node._backward is not None:
+                    node._backward()
+                if not retain_graph and node is not self:
+                    node._prev.clear()
+                    node._backward = None
+                    node._grad_fn_state = "freed"
+                topo[i] = None
+        except Exception as e:
+            for node in all_nodes:
+                node._grad_fn_state = "invalid"
+            raise e
 
         if not retain_graph:
             self._prev.clear()
-            self._backward = lambda: None
-            self._is_graph_freed = True
+            self._backward = None
+            self._grad_fn_state = "freed"
 
     # =========================================================================
     # Representation & Printing

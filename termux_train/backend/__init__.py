@@ -1,9 +1,10 @@
 """
 termux_train.backend
 ====================
-Pluggable backend switcher and manager.
+Pluggable, thread-safe backend switcher and manager using contextvars.
 """
 
+from contextvars import ContextVar
 from typing import Dict, List, Optional
 from .base import BaseBackend
 from .python_backend import PythonBackend
@@ -20,32 +21,34 @@ except ImportError:
     pass
 
 # Default backend selection: Prefer numpy if installed, fallback to pure python
-_CURRENT_BACKEND_NAME: str = "numpy" if "numpy" in _BACKENDS else "python"
+_DEFAULT_BACKEND: str = "numpy" if "numpy" in _BACKENDS else "python"
+_ACTIVE_BACKEND_VAR: ContextVar[str] = ContextVar("termux_train_active_backend", default=_DEFAULT_BACKEND)
 
 def available_backends() -> List[str]:
     """Return list of available compute backend names."""
     return list(_BACKENDS.keys())
 
 def get_backend(name: Optional[str] = None) -> BaseBackend:
-    """Return the specified or currently active compute backend."""
+    """Return the specified or currently active compute backend (thread-safe)."""
     if name is not None:
         name_clean = name.lower().strip()
         if name_clean not in _BACKENDS:
             raise ValueError(f"Backend '{name}' is not available. Available: {available_backends()}")
         return _BACKENDS[name_clean]
-    return _BACKENDS[_CURRENT_BACKEND_NAME]
+    current = _ACTIVE_BACKEND_VAR.get()
+    return _BACKENDS[current]
 
 def set_backend(name: str = "auto") -> BaseBackend:
-    """Switch the active compute backend ('auto', 'python', 'numpy')."""
-    global _CURRENT_BACKEND_NAME
+    """Switch the active compute backend ('auto', 'python', 'numpy') for the current context."""
     name_clean = name.lower().strip()
     if name_clean == "auto":
-        _CURRENT_BACKEND_NAME = "numpy" if "numpy" in _BACKENDS else "python"
-        return _BACKENDS[_CURRENT_BACKEND_NAME]
+        target = "numpy" if "numpy" in _BACKENDS else "python"
+        _ACTIVE_BACKEND_VAR.set(target)
+        return _BACKENDS[target]
     if name_clean not in _BACKENDS:
         raise ValueError(f"Backend '{name}' is not available. Available: {available_backends()} or 'auto'")
-    _CURRENT_BACKEND_NAME = name_clean
-    return _BACKENDS[_CURRENT_BACKEND_NAME]
+    _ACTIVE_BACKEND_VAR.set(name_clean)
+    return _BACKENDS[name_clean]
 
 __all__ = [
     "BaseBackend",

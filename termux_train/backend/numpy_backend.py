@@ -103,7 +103,7 @@ class NumPyBackend(BaseBackend):
         return np.exp(a)
 
     def sqrt(self, a: Any) -> Any:
-        return np.sqrt(np.maximum(0.0, a))
+        return np.sqrt(a)
 
     def neg(self, a: Any) -> Any:
         return np.negative(a)

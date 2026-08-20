@@ -24,13 +24,15 @@ def _infer_shape(data: Any) -> Shape:
             raise ValueError(f"Ragged nested list is not supported: shape mismatch between {first_shape} and {s}")
     return (len(data),) + first_shape
 
+def _wrap_int64(val: Any) -> int:
+    i_val = int(val)
+    return ((i_val + (1 << 63)) % (1 << 64)) - (1 << 63)
+
 def _normalize_data_dtype(data: Any, dtype: Optional[str] = "float32") -> Any:
-    """Recursively cast elements to the target dtype."""
+    """Recursively cast elements to the target dtype with 64-bit overflow wrap."""
     if dtype == "int64":
-        if isinstance(data, bool):
-            return int(data)
-        if isinstance(data, (int, float)):
-            return int(data)
+        if isinstance(data, (bool, int, float)):
+            return _wrap_int64(data)
         if isinstance(data, (list, tuple)):
             return [_normalize_data_dtype(x, dtype) for x in data]
     elif dtype == "bool":
@@ -276,7 +278,12 @@ class PythonBackend(BaseBackend):
         return _elementwise_unary(a, lambda x: math.exp(x))
 
     def sqrt(self, a: Any) -> Any:
-        return _elementwise_unary(a, lambda x: math.sqrt(max(0.0, x)))
+        def _sqrt(x: Any) -> float:
+            fx = float(x)
+            if fx < 0.0:
+                return float("nan")
+            return math.sqrt(fx)
+        return _elementwise_unary(a, _sqrt)
 
     def neg(self, a: Any) -> Any:
         return _elementwise_unary(a, lambda x: -x)

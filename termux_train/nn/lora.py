@@ -302,13 +302,13 @@ class LoRALinear(Module):
         old_merged = self._merged
 
         try:
-            self.base.weight._data = merged_weight
+            self.base.weight._replace_data(merged_weight, bump_version=True)
             self._base_weight_snapshot = snapshot
             self._merged = True
         except Exception as commit_err:
             rollback_errors = []
             try:
-                self.base.weight._data = old_base_data
+                self.base.weight._replace_data(old_base_data, bump_version=True)
             except Exception as r_err:
                 rollback_errors.append(f"base.weight rollback failed: {r_err}")
             try:
@@ -356,13 +356,13 @@ class LoRALinear(Module):
         old_merged = self._merged
 
         try:
-            self.base.weight._data = self._base_weight_snapshot
+            self.base.weight._replace_data(self._base_weight_snapshot, bump_version=True)
             self._base_weight_snapshot = None
             self._merged = False
         except Exception as commit_err:
             rollback_errors = []
             try:
-                self.base.weight._data = old_base_data
+                self.base.weight._replace_data(old_base_data, bump_version=True)
             except Exception as r_err:
                 rollback_errors.append(f"base.weight rollback failed: {r_err}")
             try:
@@ -480,17 +480,17 @@ class LoRALinear(Module):
         # Commit with rollback guarantee
         try:
             if pending_A_data is not None:
-                self.lora_A._data = pending_A_data
+                self.lora_A._replace_data(pending_A_data, bump_version=True)
             if pending_B_data is not None:
-                self.lora_B._data = pending_B_data
+                self.lora_B._replace_data(pending_B_data, bump_version=True)
         except Exception as commit_err:
             rollback_errors = []
             try:
-                self.lora_A._data = snapshot_A
+                self.lora_A._replace_data(snapshot_A, bump_version=True)
             except Exception as r_err_a:
                 rollback_errors.append(f"lora_A rollback failed: {r_err_a}")
             try:
-                self.lora_B._data = snapshot_B
+                self.lora_B._replace_data(snapshot_B, bump_version=True)
             except Exception as r_err_b:
                 rollback_errors.append(f"lora_B rollback failed: {r_err_b}")
 
@@ -636,14 +636,14 @@ def merge_lora_adapters(module: Module) -> None:
     # Phase 2: Transactional commit across all layers
     try:
         for layer, merged_weight, snapshot, _, _, _ in staged:
-            layer.base.weight._data = merged_weight
+            layer.base.weight._replace_data(merged_weight, bump_version=True)
             layer._base_weight_snapshot = snapshot
             layer._merged = True
     except Exception as commit_err:
         rollback_errors = []
         for layer, _, _, old_base, old_snap, old_m in staged:
             try:
-                layer.base.weight._data = old_base
+                layer.base.weight._replace_data(old_base, bump_version=True)
             except Exception as r_err:
                 rollback_errors.append(f"{layer}.base.weight rollback failed: {r_err}")
             try:
@@ -706,14 +706,14 @@ def unmerge_lora_adapters(module: Module) -> None:
     # Phase 2: Transactional commit across all layers
     try:
         for layer, snap_to_restore, _, _, _ in staged:
-            layer.base.weight._data = snap_to_restore
+            layer.base.weight._replace_data(snap_to_restore, bump_version=True)
             layer._base_weight_snapshot = None
             layer._merged = False
     except Exception as commit_err:
         rollback_errors = []
         for layer, _, old_base, old_snap, old_m in staged:
             try:
-                layer.base.weight._data = old_base
+                layer.base.weight._replace_data(old_base, bump_version=True)
             except Exception as r_err:
                 rollback_errors.append(f"{layer}.base.weight rollback failed: {r_err}")
             try:
@@ -1028,18 +1028,18 @@ def load_adapter_state_dict(module: Module, state_dict: Dict[str, Any], strict: 
         for l_key, (pending_A, pending_B) in staged.items():
             l_obj = layers[l_key]
             if pending_A is not None:
-                l_obj.lora_A._data = pending_A
+                l_obj.lora_A._replace_data(pending_A, bump_version=True)
             if pending_B is not None:
-                l_obj.lora_B._data = pending_B
+                l_obj.lora_B._replace_data(pending_B, bump_version=True)
     except Exception as commit_err:
         rollback_errors = []
         for l_obj, snap_A, snap_B in snapshots:
             try:
-                l_obj.lora_A._data = snap_A
+                l_obj.lora_A._replace_data(snap_A, bump_version=True)
             except Exception as r_err_a:
                 rollback_errors.append(f"{l_obj}.lora_A rollback failed: {r_err_a}")
             try:
-                l_obj.lora_B._data = snap_B
+                l_obj.lora_B._replace_data(snap_B, bump_version=True)
             except Exception as r_err_b:
                 rollback_errors.append(f"{l_obj}.lora_B rollback failed: {r_err_b}")
 
