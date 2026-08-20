@@ -1,113 +1,108 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Training Manual | termux-train</title>
-  <meta name="description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
-  <link rel="canonical" href="https://uno-km.github.io/termux-train/training-guide.html">
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  
-  <!-- OpenGraph / Facebook -->
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://uno-km.github.io/termux-train/training-guide.html">
-  <meta property="og:title" content="Training Manual | termux-train">
-  <meta property="og:description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
-  <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Manual & Recipes | termux-train</title>
+    <meta name="description" content="Comprehensive training manual for Tiny Models and Small LLMs on Android Termux">
+    <meta name="keywords" content="termux-train, on-device training, android deep learning, autograd pure python, lora on device, bionic arm64, snapdragon ai, mobile transformer, rope kv cache, safetensors mobile">
+    <meta name="author" content="uno-km">
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+    <link rel="canonical" href="https://uno-km.github.io/termux-train/">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="alternate" type="application/rss+xml" title="termux-train RSS Feed" href="https://uno-km.github.io/termux-train/rss.xml">
 
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Training Manual | termux-train">
-  <meta name="twitter:description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
+    <!-- Open Graph Metadata -->
+    <meta property="og:title" content="Training Manual & Recipes | termux-train">
+    <meta property="og:description" content="Comprehensive training manual for Tiny Models and Small LLMs on Android Termux">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://uno-km.github.io/termux-train/">
+    <meta property="og:site_name" content="termux-train">
+    <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
 
-  <!-- Schema.org JSON-LD -->
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "termux-train",
-    "operatingSystem": "Android, Linux, Windows, macOS",
-    "applicationCategory": "DeveloperApplication",
-    "offers": {
-      "@type": "Offer",
-      "price": "0.00"
-    },
-    "description": "Complete training manual for Tiny Models and Small LLMs on Android Termux"
-  }
-  </script>
+    <!-- Twitter Card Metadata -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="Training Manual & Recipes | termux-train">
+    <meta name="twitter:description" content="Comprehensive training manual for Tiny Models and Small LLMs on Android Termux">
 
-  <link rel="stylesheet" href="assets/style.css">
-  <script src="assets/i18n-translations.js"></script>
-  <script src="assets/i18n.js"></script>
+    <!-- Schema.org SoftwareApplication JSON-LD -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "termux-train",
+      "operatingSystem": "Android, Linux, Windows, macOS",
+      "applicationCategory": "DeveloperApplication",
+      "offers": {
+        "@type": "Offer",
+        "price": "0.00"
+      },
+      "description": "Comprehensive training manual for Tiny Models and Small LLMs on Android Termux"
+    }
+    </script>
+
+    <link rel="stylesheet" href="style.css">
+    <script src="i18n-translations.js"></script>
+    <script src="i18n.js"></script>
 </head>
 <body>
-  <header class="site-header">
-    <a href="index.html" class="brand">
-      <svg viewBox="0 0 100 100" width="28" height="28">
-        <circle cx="50" cy="50" r="36" stroke="#00f5d4" stroke-width="8" fill="none" />
-        <path d="M35 50 L46 62 L66 38" stroke="#00f5d4" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none" />
-      </svg>
-      <span data-i18n="brand.name">termux-train</span>
-      <span class="brand-tag">v0.1.0-alpha</span>
-    </a>
-    <div class="header-actions">
-      <select id="lang-selector" class="lang-select" aria-label="Language Selector">
-        <option value="en">🇺🇸 English</option>
-        <option value="ko">🇰🇷 한국어</option>
-        <option value="ja">🇯🇵 日本語</option>
-        <option value="zh">🇨🇳 简体中文</option>
-        <option value="es">🇪🇸 Español</option>
-        <option value="hi">🇮🇳 हिन्दी</option>
-      </select>
-      <button id="theme-toggle" class="theme-toggle" title="Toggle Dark/Light Mode">☀️</button>
-      <a href="https://github.com/uno-km/termux-train" target="_blank" class="icon-link" title="GitHub Repository">
-        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-        </svg>
-      </a>
-    </div>
-  </header>
-  <div class="layout-container">
-    <aside class="site-sidebar">
-      <div class="nav-group">
-        <div class="nav-title">Documentation</div>
-        <a href="index.html" class="nav-link" data-i18n="nav.home">🏠 Overview</a>
-        <a href="installation.html" class="nav-link" data-i18n="nav.installation">📦 Installation (pip)</a>
-        <a href="quickstart.html" class="nav-link" data-i18n="nav.quickstart">⚡ 5-Min Quickstart</a>
-        <a href="models.html" class="nav-link" data-i18n="nav.models">🧠 Tiny Models & LoRA</a>
-        <a href="training-guide.html" class="nav-link active" data-i18n="nav.guide">📚 Training Manual</a>
-        <a href="api-reference.html" class="nav-link" data-i18n="nav.api">📖 API Reference</a>
-        <a href="benchmarks.html" class="nav-link" data-i18n="nav.benchmarks">📊 Benchmarks</a>
-        <a href="versions.html" class="nav-link" data-i18n="nav.versions">🏷️ Releases & Changelog</a>
-      </div>
-      <div class="nav-group">
-        <div class="nav-title">AI Agent Specifications</div>
-        <a href="llms.txt" class="nav-link" target="_blank">🤖 llms.txt (Context)</a>
-        <a href="llms-full.txt" class="nav-link" target="_blank">📑 llms-full.txt (Spec)</a>
-        <a href="sitemap.xml" class="nav-link" target="_blank">🗺️ sitemap.xml</a>
-        <a href="rss.xml" class="nav-link" target="_blank">📡 rss.xml</a>
-      </div>
-    </aside>
-    <main class="site-main">
+    <header>
+        <a href="index.html" class="header-brand">
+            <img src="favicon.svg" alt="termux-train Logo">
+            <h1 data-i18n="common.brand">termux-train</h1>
+        </a>
+        <div class="header-controls">
+            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0-alpha (Native)</span>
+            <div class="lang-selector-wrapper">
+                <select class="lang-select" onchange="if(window.I18n) window.I18n.setLanguage(this.value)">
+                    <option value="en">🇺🇸 English</option>
+                    <option value="ko">🇰🇷 한국어</option>
+                    <option value="ja">🇯🇵 日本語</option>
+                    <option value="zh">🇨🇳 简体中文</option>
+                    <option value="es">🇪🇸 Español</option>
+                    <option value="hi">🇮🇳 हिन्दी</option>
+                </select>
+            </div>
+            <a href="https://pypi.org/project/termux-train/" target="_blank" class="header-btn" data-i18n="common.pypiBtn">PyPI (pip)</a>
+            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub Repository</a>
+        </div>
+    </header>
+    <div class="container">
+        <nav class="sidebar">
+            <h3 data-i18n="common.nav.overview">Overview</h3>
+            <ul>
+                <li><a href="index.html" data-i18n="common.nav.home">Home / Architecture</a></li>
+                <li><a href="installation.html" data-i18n="common.nav.installation">Installation Guide (pip)</a></li>
+                <li><a href="quickstart.html" data-i18n="common.nav.quickstart">Quickstart & Recipes</a></li>
+                <li><a href="models.html" data-i18n="common.nav.models">Tiny Models & LoRA Hub</a></li>
+                <li><a href="training-guide.html" class="active" data-i18n="common.nav.guide">Training Manual & Recipes</a></li>
+                <li><a href="api-reference.html" data-i18n="common.nav.apiReference">100% Full API Reference</a></li>
+                <li><a href="advanced-parameters.html" data-i18n="common.nav.advancedParams">Mobile Memory & INT8</a></li>
+                <li><a href="benchmarks.html" data-i18n="common.nav.benchmarks">Benchmarks & Hardware</a></li>
+                <li><a href="versions.html" data-i18n="common.nav.versions">Version Archive</a></li>
+            </ul>
+            <h3 data-i18n="common.nav.advanced">AI Agent Protocol &amp; Feeds</h3>
+            <ul>
+                <li><a href="llms.txt" target="_blank">llms.txt (AI Agent Context)</a></li>
+                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Architecture Spec)</a></li>
+                <li><a href="rss.xml" target="_blank">rss.xml (Crawler News Feed)</a></li>
+                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Search Sitemap)</a></li>
+            </ul>
+        </nav>
+        <main class="content">
+            <h2 data-i18n="guide.title">On-Device Tiny Model &amp; Small LLM Training Manual</h2>
+            <p class="lead" data-i18n="guide.subtitle">Comprehensive engineering guide for training RoPE Transformers, Whisper LoRA, and DocFold models on mobile hardware.</p>
 
-      <h1>📚 On-Device Tiny Model &amp; Small LLM Training Manual</h1>
-      <p style="color: var(--text-secondary); margin-bottom: 24px;">Comprehensive technical guide for training Transformers, Small LLMs, and Whisper LoRA on Android Termux.</p>
+            <h3>1. Mobile Hardware Constraints &amp; LMK Defense</h3>
+            <p>Android OS triggers the <strong>Low Memory Killer (LMK)</strong> when free memory falls below 300MB. termux-train avoids this via:</p>
+            <ul style="margin-left: 20px; line-height: 1.8;">
+                <li><strong>Zero-Dependency Core</strong>: Pure Python autograd consuming &lt; 30MB base RAM.</li>
+                <li><strong>Streaming MMap Datasets</strong>: Direct page-cache disk streaming without heap bloat.</li>
+                <li><strong>SafeTensors Binary Format</strong>: Zero-copy tensor serialization.</li>
+            </ul>
 
-      <h2>1. Mobile Hardware Constraints &amp; LMK Defense</h2>
-      <p>Mobile operating systems enforce strict RAM quotas and invoke the <strong>Low Memory Killer (LMK)</strong> when free RAM drops below ~300MB. termux-train mitigates this via:</p>
-      <ul style="margin-left: 20px; line-height: 1.8; color: var(--text-secondary);">
-        <li><strong>0-Dependency Autograd Core</strong>: Minimal memory footprint (&lt; 30MB base RAM).</li>
-        <li><strong>Streaming MMap Datasets</strong>: Reads token batches directly from storage via kernel page cache.</li>
-        <li><strong>SafeTensors Binary Serialization</strong>: Fast zero-copy tensor loading without Python pickle bloat.</li>
-      </ul>
-
-      <h2>2. Recipe 1: Tiny Transformer Language Model (RoPE + KV Cache)</h2>
-      <div class="code-container">
-  <div class="code-header">
-    <span>python</span>
-    <button class="copy-btn">Copy</button>
-  </div>
-  <pre><code>from termux_train import Tensor, nn, optim, set_backend
+            <h3 style="margin-top: 32px;">2. Recipe 1: Tiny Transformer Language Model (RoPE + KV Cache)</h3>
+            <pre><code class="language-python">from termux_train import Tensor, nn, optim, set_backend
 from termux_train.tokenization import CharTokenizer
 
 set_backend("auto")
@@ -125,37 +120,36 @@ model = nn.TinyTransformerLM(
 )
 
 optimizer = optim.AdamW(model.parameters(), lr=0.005)
-# Train loop and generate with KV cache
+# Train and generate with KV cache
 generated = model.generate(tokenizer.encode("to be"), max_new_tokens=20)</code></pre>
-</div>
 
-      <h2>3. Recipe 2: Tiny Whisper Speech-to-Text LoRA Fine-Tuning</h2>
-      <div class="code-container">
-  <div class="code-header">
-    <span>python</span>
-    <button class="copy-btn">Copy</button>
-  </div>
-  <pre><code># Freeze base Whisper weights and train LoRA adapters only (<30KB)
+            <h3 style="margin-top: 32px;">3. Recipe 2: Tiny Whisper Speech-to-Text LoRA Fine-Tuning</h3>
+            <pre><code class="language-python"># Freeze base model and train LoRA adapters only (<30KB)
 trainable_params = nn.adapter_parameters(model)
 optimizer = optim.AdamW(trainable_params, lr=0.02)
 # Save adapter
 checkpoint.save_lora_adapter(model, "whisper_lora.safetensors")
 # Merge for zero-overhead inference
 nn.merge_lora_adapters(model)</code></pre>
-</div>
 
-      <h2>4. Recommended Hyperparameters by Device RAM</h2>
-      <table>
-        <tr><th>Device RAM</th><th>Recommended Model</th><th>d_model</th><th>Heads</th><th>Layers</th><th>Batch Size</th><th>RAM Usage</th></tr>
-        <tr><td><strong>2GB - 3GB</strong></td><td>Micro LM / LoRA Adapter</td><td>32</td><td>2</td><td>1 ~ 2</td><td>1 ~ 2</td><td><strong>&lt; 25 MB</strong></td></tr>
-        <tr><td><strong>4GB - 6GB</strong></td><td>Tiny Transformer LM / Whisper</td><td>64</td><td>4</td><td>2 ~ 4</td><td>4 ~ 8</td><td><strong>&lt; 60 MB</strong></td></tr>
-        <tr><td><strong>8GB - 12GB</strong></td><td>Small LLM (1M–5M params)</td><td>128</td><td>8</td><td>4 ~ 6</td><td>8 ~ 16</td><td><strong>&lt; 150 MB</strong></td></tr>
-      </table>
-    </main>
-  </div>
-  <footer class="site-footer">
-    <div>&copy; 2026 AMEVA Team &amp; uno-km. Released under Apache License 2.0.</div>
-    <div>Native On-Device Deep Learning for Android Termux.</div>
-  </footer>
+            <h3 style="margin-top: 32px;">4. Recommended Hyperparameter Matrix by Device RAM</h3>
+            <table class="spec-table">
+                <thead>
+                    <tr><th>Device RAM</th><th>Recommended Model</th><th>d_model</th><th>Heads</th><th>Layers</th><th>Batch Size</th><th>RAM Usage</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>2GB - 3GB</strong></td><td>Micro LM / LoRA Adapter</td><td>32</td><td>2</td><td>1 ~ 2</td><td>1 ~ 2</td><td><strong>&lt; 25 MB</strong></td></tr>
+                    <tr><td><strong>4GB - 6GB</strong></td><td>Tiny Transformer LM / Whisper</td><td>64</td><td>4</td><td>2 ~ 4</td><td>4 ~ 8</td><td><strong>&lt; 60 MB</strong></td></tr>
+                    <tr><td><strong>8GB - 12GB</strong></td><td>Small LLM (1M–5M params)</td><td>128</td><td>8</td><td>4 ~ 6</td><td>8 ~ 16</td><td><strong>&lt; 150 MB</strong></td></tr>
+                </tbody>
+            </table>
+        </main>
+    </div>
+    <footer>
+        <div style="margin-bottom: 8px; font-size: 0.85em; opacity: 0.85;">
+            <strong>Disclaimer:</strong> termux-train is an independent open-source project developed for the Android Termux environment and is not officially affiliated with, endorsed by, or sponsored by the Termux project, PyTorch, or Meta.
+        </div>
+        <span data-i18n="common.footerText">&copy; 2026 termux-train Project (uno-km). Released under Apache License 2.0.</span>
+    </footer>
 </body>
 </html>

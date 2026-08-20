@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Benchmarks & Hardware | termux-train</title>
-    <meta name="description" content="Hardware benchmarks and audit scorecard for termux-train">
+    <title>Mobile Memory & INT8 | termux-train</title>
+    <meta name="description" content="Mobile memory management, MMap streaming, and INT8 quantization">
     <meta name="keywords" content="termux-train, on-device training, android deep learning, autograd pure python, lora on device, bionic arm64, snapdragon ai, mobile transformer, rope kv cache, safetensors mobile">
     <meta name="author" content="uno-km">
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
@@ -13,8 +13,8 @@
     <link rel="alternate" type="application/rss+xml" title="termux-train RSS Feed" href="https://uno-km.github.io/termux-train/rss.xml">
 
     <!-- Open Graph Metadata -->
-    <meta property="og:title" content="Benchmarks & Hardware | termux-train">
-    <meta property="og:description" content="Hardware benchmarks and audit scorecard for termux-train">
+    <meta property="og:title" content="Mobile Memory & INT8 | termux-train">
+    <meta property="og:description" content="Mobile memory management, MMap streaming, and INT8 quantization">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://uno-km.github.io/termux-train/">
     <meta property="og:site_name" content="termux-train">
@@ -22,8 +22,8 @@
 
     <!-- Twitter Card Metadata -->
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="Benchmarks & Hardware | termux-train">
-    <meta name="twitter:description" content="Hardware benchmarks and audit scorecard for termux-train">
+    <meta name="twitter:title" content="Mobile Memory & INT8 | termux-train">
+    <meta name="twitter:description" content="Mobile memory management, MMap streaming, and INT8 quantization">
 
     <!-- Schema.org SoftwareApplication JSON-LD -->
     <script type="application/ld+json">
@@ -37,7 +37,7 @@
         "@type": "Offer",
         "price": "0.00"
       },
-      "description": "Hardware benchmarks and audit scorecard for termux-train"
+      "description": "Mobile memory management, MMap streaming, and INT8 quantization"
     }
     </script>
 
@@ -77,8 +77,8 @@
                 <li><a href="models.html" data-i18n="common.nav.models">Tiny Models & LoRA Hub</a></li>
                 <li><a href="training-guide.html" data-i18n="common.nav.guide">Training Manual & Recipes</a></li>
                 <li><a href="api-reference.html" data-i18n="common.nav.apiReference">100% Full API Reference</a></li>
-                <li><a href="advanced-parameters.html" data-i18n="common.nav.advancedParams">Mobile Memory & INT8</a></li>
-                <li><a href="benchmarks.html" class="active" data-i18n="common.nav.benchmarks">Benchmarks & Hardware</a></li>
+                <li><a href="advanced-parameters.html" class="active" data-i18n="common.nav.advancedParams">Mobile Memory & INT8</a></li>
+                <li><a href="benchmarks.html" data-i18n="common.nav.benchmarks">Benchmarks & Hardware</a></li>
                 <li><a href="versions.html" data-i18n="common.nav.versions">Version Archive</a></li>
             </ul>
             <h3 data-i18n="common.nav.advanced">AI Agent Protocol &amp; Feeds</h3>
@@ -90,34 +90,33 @@
             </ul>
         </nav>
         <main class="content">
-            <h2 data-i18n="benchmarks.title">Performance &amp; Hardware Benchmarks</h2>
-            <p class="lead" data-i18n="benchmarks.subtitle">Empirical latency, throughput, and memory consumption across mobile CPUs.</p>
+            <h2 data-i18n="advancedParams.title">Mobile Memory Management &amp; INT8 Quantization</h2>
+            <p class="lead" data-i18n="advancedParams.subtitle">Guidelines for MMap disk streaming, SafeTensors zero-copy serialization, and LMK defense.</p>
 
-            <h3>1. 0-Point Baseline Production Audit Scorecard</h3>
-            <table class="benchmark-table">
-                <thead>
-                    <tr><th>Pillar</th><th>Metric Target</th><th>Pure Python Backend</th><th>NumPy (OpenBLAS NEON)</th><th>Score</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td><strong>Pillar 1: Autograd &amp; Math</strong></td><td>&lt; 5.0 ms</td><td>1.13 ms</td><td>0.99 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 2: Transformer &amp; RoPE</strong></td><td>&lt; 2000 ms</td><td>9179 ms</td><td>1072 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 3: Memory Efficiency</strong></td><td>&lt; 100 ms</td><td>65.7 ms</td><td>20.1 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 4: Performance Latency</strong></td><td>&lt; 1000 ms</td><td>6253 ms</td><td>622.5 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 5: Checkpoint Resilience</strong></td><td>&lt; 50 ms</td><td>40.5 ms</td><td>21.2 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr style="background: var(--primary-light);"><td><strong>TOTAL SCORE</strong></td><td colspan="3" style="text-align: right; font-weight: 700;">100.0 / 100.0</td><td><span class="badge badge-accent">Grade A+ (PERFECT)</span></td></tr>
-                </tbody>
-            </table>
+            <h3>1. SafeTensors Zero-Copy Binary Architecture</h3>
+            <p>Traditional PyTorch Python pickling creates duplicate memory copies. SafeTensors maps contiguous binary buffers directly to memory:</p>
+            <pre><code class="language-python">from termux_train import checkpoint
 
-            <h3 style="margin-top: 32px;">2. LoRA Adapter Compression vs Full Checkpoint</h3>
-            <table class="spec-table">
-                <thead>
-                    <tr><th>Model Architecture</th><th>Full PyTorch Checkpoint</th><th>termux-train SafeTensors LoRA</th><th>RAM &amp; Storage Reduction</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td><strong>Tiny Whisper Speech-to-Text</strong></td><td>557.25 KB</td><td><strong>21.01 KB</strong></td><td><strong>96.2% Reduction</strong></td></tr>
-                    <tr><td><strong>Tiny Transformer LM (2-Layer)</strong></td><td>1.20 MB</td><td><strong>42.50 KB</strong></td><td><strong>96.5% Reduction</strong></td></tr>
-                </tbody>
-            </table>
+# Save model parameters to SafeTensors
+checkpoint.save_safetensors(model.state_dict(), "model.safetensors")
+
+# Load with metadata validation
+tensors, metadata = checkpoint.load_safetensors("model.safetensors")</code></pre>
+
+            <h3 style="margin-top: 32px;">2. INT8 AbsMax Weight Quantization (75% RAM Reduction)</h3>
+            <pre><code class="language-python">from termux_train import nn
+
+# Convert FP32 linear layer to zero-allocation INT8 layer
+q_linear = nn.quantize_linear_int8(model.fc1)
+# Inference runs via (x @ W_int8) * scale
+y = q_linear(x)</code></pre>
+
+            <h3 style="margin-top: 32px;">3. MMap Streaming Token Dataset</h3>
+            <pre><code class="language-python">from termux_train.data import MMapTokenDataset
+
+# Stream multi-gigabyte corpus from disk
+dataset = MMapTokenDataset.create_from_tokens(tokens=token_list, filepath="dataset.bin", seq_len=64)
+x, target = dataset[0]  # Instant zero-allocation slice</code></pre>
         </main>
     </div>
     <footer>
