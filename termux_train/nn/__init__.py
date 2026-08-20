@@ -1,12 +1,13 @@
 """
 termux_train.nn
 ===============
-Neural Network layers, containers, modules, activations, losses, and LoRA adapters.
+Neural Network layers, containers, modules, activations, losses, embeddings, and LoRA adapters.
 """
 
 from .module import Module
 from .parameter import Parameter
 from .linear import Linear
+from .embedding import Embedding
 from .sequential import Sequential
 from .activations import ReLU, Sigmoid, Tanh
 from .loss import (
@@ -36,6 +37,7 @@ __all__ = [
     "Module",
     "Parameter",
     "Linear",
+    "Embedding",
     "Sequential",
     "ReLU",
     "Sigmoid",
