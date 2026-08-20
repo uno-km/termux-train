@@ -120,29 +120,48 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Audit Polish Commit**: `ab0f910` (`Harden Autograd: conditional closure definitions, max tie spec alignment, and leaf/multithread test coverage`)
 - **Deep Hardening Commit**: `9a74a95` (`Harden Core ML Compiler: all-neginf LogSumExp/Softmax NaN defense, 3-color cyclic DAG check, N-D Linear, and Fused CrossEntropyLoss`)
 - **VersionCounter & Contract Commit**: `92ba6b9` (`Harden Autograd & Losses: _VersionCounter shared alias invalidation, strict loss shape/bounds contracts, and all-ignore handling`)
-- **Host Tests**: `578 passed, 7 warnings in 6.61s` (92 dtype, transformer math, hardening, lifecycle & deep compiler correctness tests 100% PASS)
-- **Memory Efficiency Contract**: Fused Cross-Entropy eliminates $O(N \cdot C)$ one-hot target tensor heap allocation, requiring only $O(N)$ integer targets.
-- **Test Evidence**: `reports/junit_test_report.xml`
-- **Files**:
-  - `docs/tiny_transformer_spec.md`
-  - `termux_train/tensor.py`
-  - `termux_train/backend/__init__.py`
-  - `termux_train/backend/base.py`
-  - `termux_train/backend/python_backend.py`
-  - `termux_train/backend/numpy_backend.py`
-  - `termux_train/nn/__init__.py`
-  - `termux_train/nn/linear.py`
-  - `termux_train/nn/loss.py`
-  - `termux_train/nn/module.py`
-  - `termux_train/nn/lora.py`
-  - `termux_train/optim/optimizer.py`
-  - `scripts/setup_termux.sh`
-  - `tests/test_dtype.py`
-  - `tests/test_transformer_math.py`
-  - `tests/test_audit_hardening.py`
-  - `tests/test_autograd_lifecycle.py`
-  - `tests/test_autograd_correctness.py`
-  - `tests/test_audit_deep_hardening.py`
 - **SCRUM-315 Ticket Stage**: `검토 중 (Ready for Device Validation)`
-- **Sprint 7 Overall Stage**: `진행 중 (Host In Progress, Device Validation Pending)`
 - **Android Termux Gate**: `PENDING`
+
+### Phase 3: SCRUM-314 - Embedding Layer (nn.Embedding) (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `5f3ede1` (`Implement nn.Embedding layer with backward gradient accumulation and padding_idx support (SCRUM-314)`)
+- **Host Tests**: 11 passed (1D/2D/3D forward lookup, duplicate index gradient accumulation, padding_idx masking, state_dict roundtrip)
+- **SCRUM-314 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
+
+### Phase 4: SCRUM-316 - Tiny Transformer Block (Attention + FeedForward) (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `ef807c0` (`Implement LayerNorm, MultiHeadAttention, TransformerBlock, and TinyTransformerLM (SCRUM-316)`)
+- **Host Tests**: 8 passed (LayerNorm, MultiHeadAttention with causal mask, FeedForward MLP, Pre-LN TransformerBlock, TinyTransformerLM)
+- **SCRUM-316 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
+
+### Phase 5: SCRUM-317 - Character-Level Autoregressive LM Demo (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `90e497c` (`Add Character-Level Autoregressive LM Demo with AdamW and CrossEntropyLoss (SCRUM-317)`)
+- **Demo Script**: `examples/05_transformer_lm.py` (Loss: 3.2729 -> 0.4184 in 12.64s, text generation validated)
+- **SCRUM-317 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
+
+### Phase 6: SCRUM-318 - DocFold Toy Dataset Pipeline (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `6954b05` (`Implement DocFold toy dataset pipeline with JSONL streaming and batch generator (SCRUM-318)`)
+- **Host Tests**: 3 passed (DocFoldRecord serialization, JSONL roundtrip, padded batch generation)
+- **SCRUM-318 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
+
+### Phase 7: SCRUM-319 - DocFold Sequence Mapping Toy Trainer (Host Complete)
+- **Status**: Host Complete
+- **Product Commit**: `49eeb71` (`Add DocFold Sequence Mapping Toy Trainer with TinyTransformerLM (SCRUM-319)`)
+- **Demo Script**: `examples/06_docfold_trainer.py` (Loss: 3.4077 -> 0.0783 in 11.10s, structured symbol generation validated)
+- **SCRUM-319 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
+
+---
+
+## 4. Overall Sprint 7 Metrics & Verification
+- **Total Host Tests**: **600 passed, 7 warnings in 15.54s (100% PASS, Exit Code 0)**
+- **Test Evidence**: `reports/junit_test_report.xml`
+- **Sprint 7 Stage**: `Host Complete (All 7 Tickets Hardened & Verified, Ready for Device Gate)`
+- **Android Termux Gate**: `PENDING` (Done 전환 대기)
