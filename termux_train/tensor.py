@@ -93,7 +93,7 @@ def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Te
     return out
 
 def _attach_grad_fn(out: 'Tensor', parents: Tuple['Tensor', ...], backward_fn: Optional[Callable[[], None]]) -> None:
-    """Attach autograd closure only when out.requires_grad is True, preventing closure leaks in no_grad."""
+    """Attach autograd closure only when out.requires_grad is True, eliminating graph retention in no_grad."""
     if out.requires_grad and backward_fn is not None:
         out._prev = set(parents)
         out._backward = backward_fn
@@ -323,18 +323,19 @@ class Tensor:
             backend=self.backend
         )
 
-        orig_shape = self.shape
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            orig_shape = self.shape
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                d_self = backend.reshape(out.grad._data, orig_shape)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    d_self = backend.reshape(out.grad._data, orig_shape)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def flatten(self) -> 'Tensor':
@@ -376,18 +377,19 @@ class Tensor:
             backend=self.backend
         )
 
-        inv_axes = _invert_permutation(axes_tuple)
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            inv_axes = _invert_permutation(axes_tuple)
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                d_self = backend.transpose(out.grad._data, inv_axes)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    d_self = backend.transpose(out.grad._data, inv_axes)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def swapaxes(self, dim0: int, dim1: int) -> 'Tensor':
@@ -418,26 +420,27 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v_self = self._version
-        saved_v_other = other._version
-        s_self = self.shape
-        s_other = other.shape
-        req_self = self.requires_grad
-        req_other = other.requires_grad
-        backend = self.backend
+        if out.requires_grad:
+            saved_v_self = self._version
+            saved_v_other = other._version
+            s_self = self.shape
+            s_other = other.shape
+            req_self = self.requires_grad
+            req_other = other.requires_grad
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v_self or other._version != saved_v_other:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if out.grad is not None:
-                if req_self:
-                    d_self = backend.unbroadcast(out.grad._data, s_self)
-                    self._accumulate_grad_data(d_self)
-                if req_other:
-                    d_other = backend.unbroadcast(out.grad._data, s_other)
-                    other._accumulate_grad_data(d_other)
+            def _backward():
+                if self._version != saved_v_self or other._version != saved_v_other:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None:
+                    if req_self:
+                        d_self = backend.unbroadcast(out.grad._data, s_self)
+                        self._accumulate_grad_data(d_self)
+                    if req_other:
+                        d_other = backend.unbroadcast(out.grad._data, s_other)
+                        other._accumulate_grad_data(d_other)
 
-        _attach_grad_fn(out, (self, other), _backward)
+            _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __radd__(self, other: Any) -> 'Tensor':
@@ -456,27 +459,28 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v_self = self._version
-        saved_v_other = other._version
-        s_self = self.shape
-        s_other = other.shape
-        req_self = self.requires_grad
-        req_other = other.requires_grad
-        backend = self.backend
+        if out.requires_grad:
+            saved_v_self = self._version
+            saved_v_other = other._version
+            s_self = self.shape
+            s_other = other.shape
+            req_self = self.requires_grad
+            req_other = other.requires_grad
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v_self or other._version != saved_v_other:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if out.grad is not None:
-                if req_self:
-                    d_self = backend.unbroadcast(out.grad._data, s_self)
-                    self._accumulate_grad_data(d_self)
-                if req_other:
-                    neg_grad = backend.neg(out.grad._data)
-                    d_other = backend.unbroadcast(neg_grad, s_other)
-                    other._accumulate_grad_data(d_other)
+            def _backward():
+                if self._version != saved_v_self or other._version != saved_v_other:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None:
+                    if req_self:
+                        d_self = backend.unbroadcast(out.grad._data, s_self)
+                        self._accumulate_grad_data(d_self)
+                    if req_other:
+                        neg_grad = backend.neg(out.grad._data)
+                        d_other = backend.unbroadcast(neg_grad, s_other)
+                        other._accumulate_grad_data(d_other)
 
-        _attach_grad_fn(out, (self, other), _backward)
+            _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rsub__(self, other: Any) -> 'Tensor':
@@ -496,28 +500,29 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v_self = self._version
-        saved_v_other = other._version
-        s_self = self.shape
-        s_other = other.shape
-        req_self = self.requires_grad
-        req_other = other.requires_grad
-        backend = self.backend
+        if out.requires_grad:
+            saved_v_self = self._version
+            saved_v_other = other._version
+            s_self = self.shape
+            s_other = other.shape
+            req_self = self.requires_grad
+            req_other = other.requires_grad
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v_self or other._version != saved_v_other:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if out.grad is not None:
-                if req_self:
-                    g_self = backend.mul(out.grad._data, other._data)
-                    d_self = backend.unbroadcast(g_self, s_self)
-                    self._accumulate_grad_data(d_self)
-                if req_other:
-                    g_other = backend.mul(out.grad._data, self._data)
-                    d_other = backend.unbroadcast(g_other, s_other)
-                    other._accumulate_grad_data(d_other)
+            def _backward():
+                if self._version != saved_v_self or other._version != saved_v_other:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None:
+                    if req_self:
+                        g_self = backend.mul(out.grad._data, other._data)
+                        d_self = backend.unbroadcast(g_self, s_self)
+                        self._accumulate_grad_data(d_self)
+                    if req_other:
+                        g_other = backend.mul(out.grad._data, self._data)
+                        d_other = backend.unbroadcast(g_other, s_other)
+                        other._accumulate_grad_data(d_other)
 
-        _attach_grad_fn(out, (self, other), _backward)
+            _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rmul__(self, other: Any) -> 'Tensor':
@@ -535,31 +540,32 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v_self = self._version
-        saved_v_other = other._version
-        s_self = self.shape
-        s_other = other.shape
-        req_self = self.requires_grad
-        req_other = other.requires_grad
-        backend = self.backend
+        if out.requires_grad:
+            saved_v_self = self._version
+            saved_v_other = other._version
+            s_self = self.shape
+            s_other = other.shape
+            req_self = self.requires_grad
+            req_other = other.requires_grad
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v_self or other._version != saved_v_other:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if out.grad is not None:
-                if req_self:
-                    g_self = backend.div(out.grad._data, other._data)
-                    d_self = backend.unbroadcast(g_self, s_self)
-                    self._accumulate_grad_data(d_self)
-                if req_other:
-                    b_sq = backend.mul(other._data, other._data)
-                    neg_a = backend.neg(self._data)
-                    deriv_b = backend.div(neg_a, b_sq)
-                    g_other = backend.mul(out.grad._data, deriv_b)
-                    d_other = backend.unbroadcast(g_other, s_other)
-                    other._accumulate_grad_data(d_other)
+            def _backward():
+                if self._version != saved_v_self or other._version != saved_v_other:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None:
+                    if req_self:
+                        g_self = backend.div(out.grad._data, other._data)
+                        d_self = backend.unbroadcast(g_self, s_self)
+                        self._accumulate_grad_data(d_self)
+                    if req_other:
+                        b_sq = backend.mul(other._data, other._data)
+                        neg_a = backend.neg(self._data)
+                        deriv_b = backend.div(neg_a, b_sq)
+                        g_other = backend.mul(out.grad._data, deriv_b)
+                        d_other = backend.unbroadcast(g_other, s_other)
+                        other._accumulate_grad_data(d_other)
 
-        _attach_grad_fn(out, (self, other), _backward)
+            _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def __rtruediv__(self, other: Any) -> 'Tensor':
@@ -580,21 +586,22 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                deriv = backend.mul(
-                    backend.pow(self._data, exponent - 1.0),
-                    backend.from_data(float(exponent), dtype="float32")
-                )
-                d_self = backend.mul(deriv, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    deriv = backend.mul(
+                        backend.pow(self._data, exponent - 1.0),
+                        backend.from_data(float(exponent), dtype="float32")
+                    )
+                    d_self = backend.mul(deriv, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def __neg__(self) -> 'Tensor':
@@ -608,17 +615,18 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                d_self = backend.neg(out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    d_self = backend.neg(out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def __matmul__(self, other: 'Tensor') -> 'Tensor':
@@ -637,74 +645,75 @@ class Tensor:
             backend=self.backend
         )
 
-        s1, s2 = self.shape, other.shape
-        r1, r2 = len(s1), len(s2)
-        saved_v_self = self._version
-        saved_v_other = other._version
+        if out.requires_grad:
+            s1, s2 = self.shape, other.shape
+            r1, r2 = len(s1), len(s2)
+            saved_v_self = self._version
+            saved_v_other = other._version
 
-        def _backward():
-            if self._version != saved_v_self or other._version != saved_v_other:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if out.grad is None:
-                return
+            def _backward():
+                if self._version != saved_v_self or other._version != saved_v_other:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is None:
+                    return
 
-            if r1 == 1 and r2 == 1:
-                grad_data = out.grad._data
-                if self.requires_grad:
-                    d_self = self.backend.mul(grad_data, other._data)
-                    self._accumulate_grad_data(d_self)
-                if other.requires_grad:
-                    d_other = self.backend.mul(grad_data, self._data)
-                    other._accumulate_grad_data(d_other)
-                return
+                if r1 == 1 and r2 == 1:
+                    grad_data = out.grad._data
+                    if self.requires_grad:
+                        d_self = self.backend.mul(grad_data, other._data)
+                        self._accumulate_grad_data(d_self)
+                    if other.requires_grad:
+                        d_other = self.backend.mul(grad_data, self._data)
+                        other._accumulate_grad_data(d_other)
+                    return
 
-            G = out.grad
-            A = self
-            B = other
+                G = out.grad
+                A = self
+                B = other
 
-            if r1 == 1:
-                A_prom = A.reshape(1, s1[0])
-                G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
-            else:
-                A_prom = A
-                G_prom = G
-
-            if r2 == 1:
-                B_prom = B.reshape(s2[0], 1)
-                if r1 > 1:
-                    G_prom = G.reshape(*G.shape, 1)
-            else:
-                B_prom = B
-
-            b_ndim = B_prom.ndim
-            b_axes = list(range(b_ndim))
-            b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
-            B_prom_T = B_prom.transpose(*b_axes)
-
-            a_ndim = A_prom.ndim
-            a_axes = list(range(a_ndim))
-            a_axes[-2], a_axes[-1] = a_axes[-1], a_axes[-2]
-            A_prom_T = A_prom.transpose(*a_axes)
-
-            if self.requires_grad:
-                dA_prom = G_prom @ B_prom_T
-                dA_unbroadcast = _unbroadcast_to(dA_prom, A_prom.shape)
                 if r1 == 1:
-                    dA_final = dA_unbroadcast.reshape(s1[0])
+                    A_prom = A.reshape(1, s1[0])
+                    G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
                 else:
-                    dA_final = dA_unbroadcast
-                self._accumulate_grad_data(dA_final._data)
+                    A_prom = A
+                    G_prom = G
 
-            if other.requires_grad:
-                dB_prom = A_prom_T @ G_prom
-                dB_unbroadcast = _unbroadcast_to(dB_prom, B_prom.shape)
                 if r2 == 1:
-                    dB_final = dB_unbroadcast.reshape(s2[0])
+                    B_prom = B.reshape(s2[0], 1)
+                    if r1 > 1:
+                        G_prom = G.reshape(*G.shape, 1)
                 else:
-                    dB_final = dB_unbroadcast
-                other._accumulate_grad_data(dB_final._data)
+                    B_prom = B
 
-        _attach_grad_fn(out, (self, other), _backward)
+                b_ndim = B_prom.ndim
+                b_axes = list(range(b_ndim))
+                b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
+                B_prom_T = B_prom.transpose(*b_axes)
+
+                a_ndim = A_prom.ndim
+                a_axes = list(range(a_ndim))
+                a_axes[-2], a_axes[-1] = a_axes[-1], a_axes[-2]
+                A_prom_T = A_prom.transpose(*a_axes)
+
+                if self.requires_grad:
+                    dA_prom = G_prom @ B_prom_T
+                    dA_unbroadcast = _unbroadcast_to(dA_prom, A_prom.shape)
+                    if r1 == 1:
+                        dA_final = dA_unbroadcast.reshape(s1[0])
+                    else:
+                        dA_final = dA_unbroadcast
+                    self._accumulate_grad_data(dA_final._data)
+
+                if other.requires_grad:
+                    dB_prom = A_prom_T @ G_prom
+                    dB_unbroadcast = _unbroadcast_to(dB_prom, B_prom.shape)
+                    if r2 == 1:
+                        dB_final = dB_unbroadcast.reshape(s2[0])
+                    else:
+                        dB_final = dB_unbroadcast
+                    other._accumulate_grad_data(dB_final._data)
+
+            _attach_grad_fn(out, (self, other), _backward)
         return out
 
     def sum(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
@@ -720,25 +729,26 @@ class Tensor:
             backend=self.backend
         )
 
-        orig_shape = self.shape
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            orig_shape = self.shape
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                if not keepdims:
-                    pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
-                    grad_reshaped = backend.reshape(out.grad._data, pad_shape)
-                else:
-                    grad_reshaped = out.grad._data
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    if not keepdims:
+                        pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
+                        grad_reshaped = backend.reshape(out.grad._data, pad_shape)
+                    else:
+                        grad_reshaped = out.grad._data
 
-                ones_data = backend.ones(orig_shape)
-                d_self = backend.mul(ones_data, grad_reshaped)
-                self._accumulate_grad_data(d_self)
+                    ones_data = backend.ones(orig_shape)
+                    d_self = backend.mul(ones_data, grad_reshaped)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def max(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
@@ -757,45 +767,46 @@ class Tensor:
             backend=self.backend
         )
 
-        orig_shape = self.shape
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            orig_shape = self.shape
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                if not keepdims:
-                    pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
-                    grad_reshaped = backend.reshape(out.grad._data, pad_shape)
-                    max_reshaped = backend.reshape(out._data, pad_shape)
-                else:
-                    grad_reshaped = out.grad._data
-                    max_reshaped = out._data
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    if not keepdims:
+                        pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
+                        grad_reshaped = backend.reshape(out.grad._data, pad_shape)
+                        max_reshaped = backend.reshape(out._data, pad_shape)
+                    else:
+                        grad_reshaped = out.grad._data
+                        max_reshaped = out._data
 
-                ones_data = backend.ones(orig_shape)
-                b_grad = backend.mul(ones_data, grad_reshaped)
-                b_max = backend.mul(ones_data, max_reshaped)
+                    ones_data = backend.ones(orig_shape)
+                    b_grad = backend.mul(ones_data, grad_reshaped)
+                    b_max = backend.mul(ones_data, max_reshaped)
 
-                flat_x = backend.to_flat_list(self._data)
-                flat_max = backend.to_flat_list(b_max)
-                flat_g = backend.to_flat_list(b_grad)
+                    flat_x = backend.to_flat_list(self._data)
+                    flat_max = backend.to_flat_list(b_max)
+                    flat_g = backend.to_flat_list(b_grad)
 
-                # 1. Indicator mask for tied maximums
-                mask_flat = [1.0 if x == m else 0.0 for x, m in zip(flat_x, flat_max)]
-                mask_data = backend.from_data(backend.reshape(mask_flat, orig_shape), dtype="float32")
+                    # 1. Indicator mask for tied maximums
+                    mask_flat = [1.0 if x == m else 0.0 for x, m in zip(flat_x, flat_max)]
+                    mask_data = backend.from_data(backend.reshape(mask_flat, orig_shape), dtype="float32")
 
-                # 2. Count tied maximums along reduction axes
-                k_data = backend.sum(mask_data, axis=norm_axes, keepdims=True)
-                k_broadcast = backend.mul(ones_data, k_data)
-                flat_k = backend.to_flat_list(k_broadcast)
+                    # 2. Count tied maximums along reduction axes
+                    k_data = backend.sum(mask_data, axis=norm_axes, keepdims=True)
+                    k_broadcast = backend.mul(ones_data, k_data)
+                    flat_k = backend.to_flat_list(k_broadcast)
 
-                # 3. Equidistribute subgradient mass: g / k
-                d_flat = [(g / k_val) if m_val > 0.0 else 0.0 for g, m_val, k_val in zip(flat_g, mask_flat, flat_k)]
-                d_self = backend.from_data(backend.reshape(d_flat, orig_shape), dtype="float32")
-                self._accumulate_grad_data(d_self)
+                    # 3. Equidistribute subgradient mass: g / k
+                    d_flat = [(g / k_val) if m_val > 0.0 else 0.0 for g, m_val, k_val in zip(flat_g, mask_flat, flat_k)]
+                    d_self = backend.from_data(backend.reshape(d_flat, orig_shape), dtype="float32")
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def mean(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
@@ -816,17 +827,18 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                d_self = backend.mul(out._data, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    d_self = backend.mul(out._data, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def sqrt(self) -> 'Tensor':
@@ -841,18 +853,19 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                inv_two_sqrt = backend.div(backend.from_data(0.5, dtype="float32"), out._data)
-                d_self = backend.mul(inv_two_sqrt, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    inv_two_sqrt = backend.div(backend.from_data(0.5, dtype="float32"), out._data)
+                    d_self = backend.mul(inv_two_sqrt, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def log(self) -> 'Tensor':
@@ -867,18 +880,19 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                inv_x = backend.div(backend.ones(self.shape), self._data)
-                d_self = backend.mul(inv_x, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    inv_x = backend.div(backend.ones(self.shape), self._data)
+                    d_self = backend.mul(inv_x, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def relu(self) -> 'Tensor':
@@ -892,20 +906,21 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                flat_data = backend.to_flat_list(self._data)
-                flat_grad = backend.to_flat_list(out.grad._data)
-                d_flat = [g if x > 0 else 0.0 for x, g in zip(flat_data, flat_grad)]
-                d_self = backend.from_data(backend.reshape(d_flat, self.shape), dtype="float32")
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    flat_data = backend.to_flat_list(self._data)
+                    flat_grad = backend.to_flat_list(out.grad._data)
+                    d_flat = [g if x > 0 else 0.0 for x, g in zip(flat_data, flat_grad)]
+                    d_self = backend.from_data(backend.reshape(d_flat, self.shape), dtype="float32")
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def sigmoid(self) -> 'Tensor':
@@ -919,20 +934,21 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                one = backend.ones(self.shape)
-                one_minus_sig = backend.sub(one, out._data)
-                deriv = backend.mul(out._data, one_minus_sig)
-                d_self = backend.mul(deriv, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    one = backend.ones(self.shape)
+                    one_minus_sig = backend.sub(one, out._data)
+                    deriv = backend.mul(out._data, one_minus_sig)
+                    d_self = backend.mul(deriv, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def tanh(self) -> 'Tensor':
@@ -946,20 +962,21 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                one = backend.ones(self.shape)
-                tanh_sq = backend.mul(out._data, out._data)
-                deriv = backend.sub(one, tanh_sq)
-                d_self = backend.mul(deriv, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    one = backend.ones(self.shape)
+                    tanh_sq = backend.mul(out._data, out._data)
+                    deriv = backend.sub(one, tanh_sq)
+                    d_self = backend.mul(deriv, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def clamp(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
@@ -973,20 +990,21 @@ class Tensor:
             backend=self.backend
         )
 
-        saved_v = self._version
-        backend = self.backend
+        if out.requires_grad:
+            saved_v = self._version
+            backend = self.backend
 
-        def _backward():
-            if self._version != saved_v:
-                raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
-            if self.requires_grad and out.grad is not None:
-                flat_x = backend.to_flat_list(self._data)
-                mask = [1.0 if ((min_val is None or v >= min_val) and (max_val is None or v <= max_val)) else 0.0 for v in flat_x]
-                mask_data = backend.from_data(backend.reshape(mask, self.shape), dtype="float32")
-                d_self = backend.mul(mask_data, out.grad._data)
-                self._accumulate_grad_data(d_self)
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if self.requires_grad and out.grad is not None:
+                    flat_x = backend.to_flat_list(self._data)
+                    mask = [1.0 if ((min_val is None or v >= min_val) and (max_val is None or v <= max_val)) else 0.0 for v in flat_x]
+                    mask_data = backend.from_data(backend.reshape(mask, self.shape), dtype="float32")
+                    d_self = backend.mul(mask_data, out.grad._data)
+                    self._accumulate_grad_data(d_self)
 
-        _attach_grad_fn(out, (self,), _backward)
+            _attach_grad_fn(out, (self,), _backward)
         return out
 
     def clip(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
@@ -1101,7 +1119,8 @@ class Tensor:
                 if not retain_graph and node is not self:
                     node._prev.clear()
                     node._backward = None
-                    node._grad_fn_state = "freed"
+                    if node._op:
+                        node._grad_fn_state = "freed"
                 topo[i] = None
         except Exception as e:
             for node in all_nodes:
@@ -1111,7 +1130,8 @@ class Tensor:
         if not retain_graph:
             self._prev.clear()
             self._backward = None
-            self._grad_fn_state = "freed"
+            if self._op:
+                self._grad_fn_state = "freed"
 
     # =========================================================================
     # Representation & Printing

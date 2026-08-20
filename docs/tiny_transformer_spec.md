@@ -37,8 +37,9 @@ For tensors $A$ of shape $(\dots, M, K)$ and $B$ of shape $(\dots, K, N)$:
 
 ### 3.2 Maximum with Subgradient
 - Forward: $y = \max(x, \text{axis}, \text{keepdims})$
-- Backward: Upstream gradient is routed to the position of the maximum value (argmax mask):
-  $$\frac{\partial y}{\partial x_i} = g \cdot \mathbf{1}(x_i = \max(x))$$
+- Backward: Upstream gradient is equidistributed across tied maximum positions (conserving total subgradient mass):
+  $$\frac{\partial y}{\partial x_i} = \frac{g \cdot \mathbf{1}(x_i = \max(x))}{\sum_j \mathbf{1}(x_j = \max(x))}$$
+  where $\mathbf{1}(\cdot)$ is the indicator function.
 
 ### 3.3 Stable Log-Sum-Exp & Softmax
 - Max-shifted Log-Sum-Exp:

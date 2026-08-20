@@ -205,3 +205,78 @@ def test_backward_exception_poisons_graph(backend_name):
     # Graph is now poisoned
     with pytest.raises(RuntimeError, match="invalid/poisoned"):
         loss.backward()
+
+
+# =============================================================================
+# 10. Leaf Usability & Backward Invariance
+# =============================================================================
+
+@pytest.mark.parametrize("backend_name", available_backends())
+def test_leaf_remains_usable_after_graph_backward(backend_name):
+    set_backend(backend_name)
+    x = Tensor(2.0, requires_grad=True)
+    y = x * x
+    y.backward()
+    assert x.grad.item() == 4.0
+    x.zero_grad()
+
+    # Leaf x itself can be backwarded directly or used in new graph
+    x.backward()
+    assert x.grad.item() == 1.0
+    x.zero_grad()
+
+    z = x * 3.0
+    z.backward()
+    assert x.grad.item() == 3.0
+
+
+# =============================================================================
+# 11. ContextVar Multithread & Async Context Isolation
+# =============================================================================
+
+def test_contextvar_multithread_isolation():
+    import threading
+    results = {}
+
+    def worker(name, use_no_grad):
+        if use_no_grad:
+            with no_grad():
+                t = Tensor(1.0, requires_grad=True)
+                results[name] = t.requires_grad
+        else:
+            t = Tensor(1.0, requires_grad=True)
+            results[name] = t.requires_grad
+
+    t1 = threading.Thread(target=worker, args=("thread_no_grad", True))
+    t2 = threading.Thread(target=worker, args=("thread_grad", False))
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert results["thread_no_grad"] is False
+    assert results["thread_grad"] is True
+    assert Tensor.is_grad_enabled() is True
+
+
+# =============================================================================
+# 12. Int64 Full Boundary Two's Complement Overflows
+# =============================================================================
+
+@pytest.mark.parametrize("backend_name", available_backends())
+def test_int64_boundary_overflow_cases(backend_name):
+    set_backend(backend_name)
+    INT64_MAX = (1 << 63) - 1
+    INT64_MIN = -(1 << 63)
+
+    # INT64_MAX + 1 -> INT64_MIN
+    t_max = Tensor([INT64_MAX], dtype="int64")
+    t_one = Tensor([1], dtype="int64")
+    res_add = t_max + t_one
+    assert res_add.tolist()[0] == INT64_MIN
+
+    # INT64_MIN - 1 -> INT64_MAX
+    t_min = Tensor([INT64_MIN], dtype="int64")
+    res_sub = t_min - t_one
+    assert res_sub.tolist()[0] == INT64_MAX
