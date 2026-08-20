@@ -19,7 +19,7 @@ class BaseBackend(ABC):
         pass
 
     @abstractmethod
-    def from_data(self, data: Any) -> Any:
+    def from_data(self, data: Any, dtype: Optional[str] = "float32") -> Any:
         """Convert arbitrary python data (scalar, list, array) into the backend native structure."""
         pass
 
@@ -29,8 +29,8 @@ class BaseBackend(ABC):
         pass
 
     @abstractmethod
-    def to_flat_list(self, data: Any) -> List[float]:
-        """Convert native data to a flat 1D Python list of floats."""
+    def to_flat_list(self, data: Any) -> List[Any]:
+        """Convert native data to a flat 1D Python list."""
         pass
 
     @abstractmethod
@@ -39,12 +39,12 @@ class BaseBackend(ABC):
         pass
 
     @abstractmethod
-    def zeros(self, shape: Shape) -> Any:
+    def zeros(self, shape: Shape, dtype: str = "float32") -> Any:
         """Create a tensor filled with zeros."""
         pass
 
     @abstractmethod
-    def ones(self, shape: Shape) -> Any:
+    def ones(self, shape: Shape, dtype: str = "float32") -> Any:
         """Create a tensor filled with ones."""
         pass
 
@@ -89,6 +89,16 @@ class BaseBackend(ABC):
         pass
 
     @abstractmethod
+    def exp(self, a: Any) -> Any:
+        """Elementwise exponential exp(a)."""
+        pass
+
+    @abstractmethod
+    def sqrt(self, a: Any) -> Any:
+        """Elementwise square root sqrt(a)."""
+        pass
+
+    @abstractmethod
     def neg(self, a: Any) -> Any:
         """Elementwise negation -a."""
         pass
@@ -101,6 +111,11 @@ class BaseBackend(ABC):
     @abstractmethod
     def sum(self, data: Any, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> Any:
         """Sum reduction along specified axis or all elements."""
+        pass
+
+    @abstractmethod
+    def max(self, data: Any, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> Any:
+        """Max reduction along specified axis or all elements."""
         pass
 
     @abstractmethod

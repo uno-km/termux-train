@@ -2,10 +2,15 @@
 termux_train.tensor
 ===================
 Core Multi-Dimensional Tensor Class with Dynamic DAG Autograd Engine.
+Supports multi-dtype representation (float32, int64, bool), iterative DAG traversal,
+generalized N-D batched matmul, and Transformer mathematical primitives.
 """
 
+import math
 from typing import Any, Tuple, Set, List, Optional, Union, Callable
 from .backend import get_backend, BaseBackend
+
+VALID_DTYPES = {"float32", "int64", "bool"}
 
 def _invert_permutation(axes: Tuple[int, ...]) -> Tuple[int, ...]:
     inv = [0] * len(axes)
@@ -35,101 +40,76 @@ def _reduced_count(shape: Tuple[int, ...], axes: Tuple[int, ...]) -> int:
             count *= shape[a]
     return max(1, count)
 
-def _classify_matmul(s1: Tuple[int, ...], s2: Tuple[int, ...]) -> str:
-    """Classify 1D~3D matmul shape contract or raise dimension mismatch / NotImplementedError."""
-    r1, r2 = len(s1), len(s2)
-    if r1 not in (1, 2, 3) or r2 not in (1, 2, 3):
-        raise NotImplementedError(
-            "matmul supports every rank combination where both operands "
-            f"are between 1D and 3D. Received shapes {s1} and {s2}. "
-            "Scalar operands and 4D+ ND matmul are not supported."
-        )
+def _flatten_data_types(data: Any) -> List[Any]:
+    if isinstance(data, (list, tuple)):
+        res = []
+        for x in data:
+            res.extend(_flatten_data_types(x))
+        return res
+    return [data]
 
-    # 1D @ 1D -> ()
-    if r1 == 1 and r2 == 1:
-        if s1[0] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for vector dot product: {s1[0]} != {s2[0]}")
-        return "1d_1d"
+def _infer_dtype_from_data(data: Any) -> str:
+    flat = _flatten_data_types(data)
+    if len(flat) == 0:
+        return "float32"
+    if all(isinstance(x, bool) for x in flat):
+        return "bool"
+    if all(isinstance(x, int) and not isinstance(x, bool) for x in flat):
+        return "int64"
+    return "float32"
 
-    # 1D @ 2D -> (N,)
-    if r1 == 1 and r2 == 2:
-        if s1[0] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 1D@2D matmul: {s1[0]} != {s2[0]}")
-        return "1d_2d"
+def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Tensor':
+    """Sum out broadcast dimensions to match target_shape."""
+    current_shape = grad_tensor.shape
+    if current_shape == target_shape:
+        return grad_tensor
 
-    # 1D @ 3D -> (B, N)
-    if r1 == 1 and r2 == 3:
-        if s1[0] != s2[1]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 1D@3D matmul: {s1[0]} != {s2[1]}")
-        return "1d_3d"
+    cur_ndim = len(current_shape)
+    tgt_ndim = len(target_shape)
+    pad = cur_ndim - tgt_ndim
 
-    # 2D @ 1D -> (M,)
-    if r1 == 2 and r2 == 1:
-        if s1[1] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for matrix-vector multiplication: {s1[1]} != {s2[0]}")
-        return "2d_1d"
+    out = grad_tensor
+    for _ in range(pad):
+        out = out.sum(axis=0, keepdims=False)
 
-    # 2D @ 2D -> (M, N)
-    if r1 == 2 and r2 == 2:
-        if s1[1] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for matrix multiplication: {s1[1]} != {s2[0]}")
-        return "2d_2d"
+    for i in range(tgt_ndim):
+        if target_shape[i] == 1 and out.shape[i] > 1:
+            out = out.sum(axis=i, keepdims=True)
 
-    # 2D @ 3D -> (B, M, N)
-    if r1 == 2 and r2 == 3:
-        if s1[1] != s2[1]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 2D@3D matmul: {s1[1]} != {s2[1]}")
-        return "2d_3d"
+    return out
 
-    # 3D @ 1D -> (B, M)
-    if r1 == 3 and r2 == 1:
-        if s1[2] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 3D@1D matmul: {s1[2]} != {s2[0]}")
-        return "3d_1d"
-
-    # 3D @ 2D -> (B, M, N)
-    if r1 == 3 and r2 == 2:
-        if s1[2] != s2[0]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 3D@2D matmul: {s1[2]} != {s2[0]}")
-        return "3d_2d"
-
-    # 3D @ 3D -> (B, M, N)
-    if r1 == 3 and r2 == 3:
-        if s1[0] != s2[0]:
-            raise ValueError(f"Batch dimensions must match: {s1[0]} != {s2[0]}")
-        if s1[2] != s2[1]:
-            raise ValueError(f"Shapes {s1} and {s2} not aligned for 3D@3D matmul: {s1[2]} != {s2[1]}")
-        return "3d_3d"
-
-    raise NotImplementedError(
-        f"matmul unsupported for shapes {s1} and {s2}."
-    )
 
 class Tensor:
     """
     Core Tensor class supporting multi-dimensional arrays, pluggable backends,
-    and dynamic reverse-mode automatic differentiation (Autograd).
+    multi-dtype representation (float32, int64, bool), and dynamic reverse-mode automatic differentiation.
     """
-    
+
     def __init__(
         self,
         data: Any,
+        dtype: Optional[str] = None,
         requires_grad: bool = False,
         _prev: Tuple['Tensor', ...] = (),
         _op: str = "",
         backend: Optional[BaseBackend] = None
     ):
+        if dtype is not None and dtype not in VALID_DTYPES:
+            raise ValueError(f"Unsupported dtype: '{dtype}'. Valid dtypes are {sorted(VALID_DTYPES)}")
+
         if isinstance(data, Tensor):
-            if backend is None:
-                self.backend = data.backend
-                self._data = data._data
-            else:
-                self.backend = backend
-                self._data = self.backend.from_data(data.tolist())
+            self.dtype = dtype or data.dtype
+            self.backend = backend or data.backend
+            self._data = self.backend.from_data(data.tolist(), dtype=self.dtype)
         else:
             self.backend = backend or get_backend()
-            self._data = self.backend.from_data(data)
-            
+            inferred = _infer_dtype_from_data(data) if dtype is None else dtype
+            self.dtype = inferred
+            self._data = self.backend.from_data(data, dtype=self.dtype)
+
+        if self.dtype in ("int64", "bool") and requires_grad:
+            raise ValueError(f"Only Tensors with floating point dtype can require gradients (got dtype='{self.dtype}')")
+
         self.requires_grad: bool = requires_grad
         self.grad: Optional['Tensor'] = None
         self._backward: Callable[[], None] = lambda: None
@@ -140,19 +120,14 @@ class Tensor:
         """Accumulate incoming raw gradient data into self.grad safely."""
         if not self.requires_grad:
             return
-        g_data = self.backend.from_data(grad_data)
+        g_data = self.backend.from_data(grad_data, dtype="float32")
         if self.grad is None:
-            self.grad = Tensor(g_data, requires_grad=False, backend=self.backend)
+            self.grad = Tensor(g_data, dtype="float32", requires_grad=False, backend=self.backend)
         else:
             self.grad._data = self.backend.add(self.grad._data, g_data)
 
     def _ensure_tensor_on_self_backend(self, other: Any) -> 'Tensor':
-        """
-        Normalize other operand to Tensor on self.backend.
-        If other is a Tensor on a different backend:
-          - If requires_grad=False: automatically converted to self.backend.
-          - If requires_grad=True: raises RuntimeError to prevent broken autograd parentage.
-        """
+        """Normalize other operand to Tensor on self.backend."""
         if not isinstance(other, Tensor):
             return Tensor(other, backend=self.backend)
 
@@ -162,163 +137,207 @@ class Tensor:
         if other.requires_grad:
             raise RuntimeError(
                 f"Cross-backend autograd operation is not supported between {self.backend.name} "
-                f"and {other.backend.name} when requires_grad=True. "
-                "Ensure all trainable tensors reside on the same backend before forward/backward."
+                f"and {other.backend.name} when requires_grad=True."
             )
 
-        return Tensor(other.tolist(), requires_grad=False, backend=self.backend)
+        return Tensor(other.tolist(), dtype=other.dtype, requires_grad=False, backend=self.backend)
 
     @property
     def data(self) -> Any:
-        """Return native underlying data."""
         return self._data
 
     @data.setter
     def data(self, value: Any) -> None:
-        """
-        Safely update underlying data while strictly preserving self.backend.
-        If a Tensor is assigned (even from another backend), its data is converted to self.backend.
-        """
         if isinstance(value, Tensor):
-            self._data = self.backend.from_data(value.tolist())
+            self._data = self.backend.from_data(value.tolist(), dtype=self.dtype)
         else:
-            self._data = self.backend.from_data(value)
+            self._data = self.backend.from_data(value, dtype=self.dtype)
 
     @property
     def shape(self) -> Tuple[int, ...]:
-        """Return shape tuple."""
         return self.backend.get_shape(self._data)
 
     @property
     def ndim(self) -> int:
-        """Return number of dimensions."""
         return len(self.shape)
 
     @property
     def T(self) -> 'Tensor':
-        """2D Transpose shortcut."""
         return self.transpose()
 
-    def item(self) -> float:
-        """Extract a single scalar value from a 0D/1D 1-element tensor."""
+    def item(self) -> Union[float, int, bool]:
         flat = self.backend.to_flat_list(self._data)
         if len(flat) != 1:
             raise ValueError(f"only one element tensors can be converted to Python scalars (got size {len(flat)})")
-        return flat[0]
+        val = flat[0]
+        if self.dtype == "int64":
+            return int(val)
+        if self.dtype == "bool":
+            return bool(val)
+        return float(val)
+
+    def tolist(self) -> Any:
+        return self.backend.to_nested_list(self._data)
+
+    def to(self, backend: Union[str, BaseBackend]) -> 'Tensor':
+        if isinstance(backend, str):
+            from .backend import get_backend
+            target_backend = get_backend(backend)
+        else:
+            target_backend = backend
+
+        if target_backend.name == self.backend.name:
+            return self
+
+        return Tensor(
+            self.tolist(),
+            dtype=self.dtype,
+            requires_grad=self.requires_grad,
+            backend=target_backend
+        )
+
+    def detach(self) -> 'Tensor':
+        """Returns a new Tensor detached from the current autograd computation graph."""
+        return Tensor(
+            self.tolist(),
+            dtype=self.dtype,
+            requires_grad=False,
+            backend=self.backend
+        )
 
     def zero_grad(self, set_to_none: bool = True) -> None:
-        """
-        Sets gradient of this tensor to zero or None.
-        
-        Args:
-            set_to_none: if True, sets self.grad to None to release memory (default).
-                         if False, initializes self.grad as a zero tensor.
-        """
         if not self.requires_grad:
             self.grad = None
             return
         if set_to_none:
             self.grad = None
         else:
-            if self.grad is None:
-                self.grad = Tensor(self.backend.zeros(self.shape), backend=self.backend)
-            else:
-                self.grad._data = self.backend.zeros(self.shape)
+            self.grad = Tensor(self.backend.zeros(self.shape), dtype="float32", requires_grad=False, backend=self.backend)
 
-    def tolist(self) -> Any:
-        """Return nested Python list representation."""
-        return self.backend.to_nested_list(self._data)
+    # =========================================================================
+    # Reshaping & Permutation
+    # =========================================================================
 
-    def numpy(self) -> Any:
-        """Convert tensor to a NumPy array if available."""
-        import numpy as np
-        if isinstance(self._data, np.ndarray):
-            return self._data
-        flat = self.backend.to_flat_list(self._data)
-        return np.array(flat, dtype=np.float32).reshape(self.shape)
-
-    def reshape(self, *new_shape: Union[int, Tuple[int, ...]]) -> 'Tensor':
-        """Reshape tensor to new dimensions."""
-        if len(new_shape) == 1 and isinstance(new_shape[0], (tuple, list)):
-            target_shape = tuple(new_shape[0])
+    def reshape(self, *shape: Union[int, Tuple[int, ...], List[int]]) -> 'Tensor':
+        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
+            new_shape = tuple(shape[0])
         else:
-            target_shape = tuple(new_shape)
-            
-        old_shape = self.shape
+            new_shape = tuple(shape)
+
+        num_neg_ones = new_shape.count(-1)
+        if num_neg_ones > 1:
+            raise ValueError("can only specify one unknown dimension (-1)")
+
+        if num_neg_ones == 1:
+            cur_elements = 1
+            for d in self.shape:
+                cur_elements *= d
+
+            known_elements = 1
+            for d in new_shape:
+                if d != -1:
+                    known_elements *= d
+
+            if cur_elements % known_elements != 0:
+                raise ValueError(f"Cannot reshape tensor of size {cur_elements} into shape {new_shape}")
+
+            inferred_dim = cur_elements // known_elements
+            new_shape = tuple(inferred_dim if d == -1 else d for d in new_shape)
+
+        reshaped_data = self.backend.reshape(self._data, new_shape)
         out = Tensor(
-            self.backend.reshape(self._data, target_shape),
+            reshaped_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="reshape",
             backend=self.backend
         )
 
+        orig_shape = self.shape
         def _backward():
             if self.requires_grad and out.grad is not None:
-                grad_reshaped = self.backend.reshape(out.grad._data, old_shape)
+                d_self = self.backend.reshape(out.grad._data, orig_shape)
                 if self.grad is None:
-                    self.grad = Tensor(grad_reshaped, backend=self.backend)
+                    self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                 else:
-                    self.grad._data = self.backend.add(self.grad._data, grad_reshaped)
+                    self.grad._data = self.backend.add(self.grad._data, d_self)
 
         out._backward = _backward
         return out
 
     def flatten(self) -> 'Tensor':
-        """Flatten tensor to 1D."""
-        num_elements = 1
-        for d in self.shape:
-            num_elements *= d
-        return self.reshape(num_elements)
+        """Flatten tensor to a 1D 1-dimensional tensor."""
+        return self.reshape(-1)
 
-    def transpose(self, *axes: Union[int, Tuple[int, ...], List[int]]) -> 'Tensor':
-        """
-        Transpose tensor dimensions according to given axes permutation.
-        Supports 2D .T as well as arbitrary ND permutations with inverse permutation backward.
-        """
+    def transpose(self, *axes: int) -> 'Tensor':
+        ndim = self.ndim
         if len(axes) == 0:
-            axes_norm = tuple(reversed(range(self.ndim)))
+            if ndim < 2:
+                return self
+            axes_tuple = tuple(range(ndim - 1, -1, -1))
         elif len(axes) == 1 and isinstance(axes[0], (tuple, list)):
-            axes_norm = tuple(axes[0])
-        elif len(axes) == 1 and axes[0] is None:
-            axes_norm = tuple(reversed(range(self.ndim)))
+            axes_tuple = tuple(axes[0])
         else:
-            axes_norm = tuple(axes)
+            axes_tuple = tuple(axes)
 
-        axes_norm = tuple(a + self.ndim if a < 0 else a for a in axes_norm)
-        if len(axes_norm) != self.ndim or set(axes_norm) != set(range(self.ndim)):
-            raise ValueError(f"Invalid axes {axes_norm} for transpose of {self.ndim}D tensor")
+        if len(axes_tuple) != ndim:
+            raise ValueError(f"axes must match dimension count {ndim}, got {len(axes_tuple)}")
 
+        norm_axes = []
+        for a in axes_tuple:
+            na = a + ndim if a < 0 else a
+            if not (0 <= na < ndim):
+                raise ValueError(f"axis {a} is out of bounds for tensor of dimension {ndim}")
+            norm_axes.append(na)
+
+        if len(set(norm_axes)) != ndim:
+            raise ValueError(f"repeated axis in transpose: {axes_tuple}")
+
+        axes_tuple = tuple(norm_axes)
+        trans_data = self.backend.transpose(self._data, axes_tuple)
         out = Tensor(
-            self.backend.transpose(self._data, axes=axes_norm),
+            trans_data,
+            dtype=self.dtype,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="transpose",
             backend=self.backend
         )
 
+        inv_axes = _invert_permutation(axes_tuple)
         def _backward():
             if self.requires_grad and out.grad is not None:
-                inv_axes = _invert_permutation(axes_norm)
-                grad_t = self.backend.transpose(out.grad._data, axes=inv_axes)
+                d_self = self.backend.transpose(out.grad._data, inv_axes)
                 if self.grad is None:
-                    self.grad = Tensor(grad_t, backend=self.backend)
+                    self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                 else:
-                    self.grad._data = self.backend.add(self.grad._data, grad_t)
+                    self.grad._data = self.backend.add(self.grad._data, d_self)
 
         out._backward = _backward
         return out
 
+    def swapaxes(self, dim0: int, dim1: int) -> 'Tensor':
+        """Swap two dimensions of a tensor."""
+        ndim = self.ndim
+        d0 = dim0 + ndim if dim0 < 0 else dim0
+        d1 = dim1 + ndim if dim1 < 0 else dim1
+        if not (0 <= d0 < ndim) or not (0 <= d1 < ndim):
+            raise ValueError(f"swapaxes dimensions ({dim0}, {dim1}) out of bounds for ndim={ndim}")
+        axes = list(range(ndim))
+        axes[d0], axes[d1] = axes[d1], axes[d0]
+        return self.transpose(*axes)
+
     # =========================================================================
-    # Elementwise Arithmetic & Autograd
+    # Arithmetic & Autograd Operators
     # =========================================================================
 
     def __add__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        req_grad = self.requires_grad or other.requires_grad
+        out_data = self.backend.add(self._data, other._data)
         out = Tensor(
-            self.backend.add(self._data, other._data),
-            requires_grad=req_grad,
+            out_data,
+            requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="+",
             backend=self.backend
@@ -329,14 +348,13 @@ class Tensor:
                 if self.requires_grad:
                     d_self = self.backend.unbroadcast(out.grad._data, self.shape)
                     if self.grad is None:
-                        self.grad = Tensor(d_self, backend=self.backend)
+                        self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                     else:
                         self.grad._data = self.backend.add(self.grad._data, d_self)
-                        
                 if other.requires_grad:
                     d_other = self.backend.unbroadcast(out.grad._data, other.shape)
                     if other.grad is None:
-                        other.grad = Tensor(d_other, backend=other.backend)
+                        other.grad = Tensor(d_other, dtype="float32", backend=self.backend)
                     else:
                         other.grad._data = self.backend.add(other.grad._data, d_other)
 
@@ -344,14 +362,14 @@ class Tensor:
         return out
 
     def __radd__(self, other: Any) -> 'Tensor':
-        return self + other
+        return self.__add__(other)
 
     def __sub__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        req_grad = self.requires_grad or other.requires_grad
+        out_data = self.backend.sub(self._data, other._data)
         out = Tensor(
-            self.backend.sub(self._data, other._data),
-            requires_grad=req_grad,
+            out_data,
+            requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="-",
             backend=self.backend
@@ -362,15 +380,14 @@ class Tensor:
                 if self.requires_grad:
                     d_self = self.backend.unbroadcast(out.grad._data, self.shape)
                     if self.grad is None:
-                        self.grad = Tensor(d_self, backend=self.backend)
+                        self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                     else:
                         self.grad._data = self.backend.add(self.grad._data, d_self)
-                        
                 if other.requires_grad:
                     neg_grad = self.backend.neg(out.grad._data)
                     d_other = self.backend.unbroadcast(neg_grad, other.shape)
                     if other.grad is None:
-                        other.grad = Tensor(d_other, backend=other.backend)
+                        other.grad = Tensor(d_other, dtype="float32", backend=self.backend)
                     else:
                         other.grad._data = self.backend.add(other.grad._data, d_other)
 
@@ -378,15 +395,15 @@ class Tensor:
         return out
 
     def __rsub__(self, other: Any) -> 'Tensor':
-        other_t = self._ensure_tensor_on_self_backend(other)
-        return other_t - self
+        other = self._ensure_tensor_on_self_backend(other)
+        return other.__sub__(self)
 
     def __mul__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        req_grad = self.requires_grad or other.requires_grad
+        out_data = self.backend.mul(self._data, other._data)
         out = Tensor(
-            self.backend.mul(self._data, other._data),
-            requires_grad=req_grad,
+            out_data,
+            requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="*",
             backend=self.backend
@@ -395,18 +412,17 @@ class Tensor:
         def _backward():
             if out.grad is not None:
                 if self.requires_grad:
-                    d_self = self.backend.mul(other._data, out.grad._data)
-                    d_self = self.backend.unbroadcast(d_self, self.shape)
+                    g_self = self.backend.mul(out.grad._data, other._data)
+                    d_self = self.backend.unbroadcast(g_self, self.shape)
                     if self.grad is None:
-                        self.grad = Tensor(d_self, backend=self.backend)
+                        self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                     else:
                         self.grad._data = self.backend.add(self.grad._data, d_self)
-                        
                 if other.requires_grad:
-                    d_other = self.backend.mul(self._data, out.grad._data)
-                    d_other = self.backend.unbroadcast(d_other, other.shape)
+                    g_other = self.backend.mul(out.grad._data, self._data)
+                    d_other = self.backend.unbroadcast(g_other, other.shape)
                     if other.grad is None:
-                        other.grad = Tensor(d_other, backend=other.backend)
+                        other.grad = Tensor(d_other, dtype="float32", backend=self.backend)
                     else:
                         other.grad._data = self.backend.add(other.grad._data, d_other)
 
@@ -414,14 +430,14 @@ class Tensor:
         return out
 
     def __rmul__(self, other: Any) -> 'Tensor':
-        return self * other
+        return self.__mul__(other)
 
     def __truediv__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        req_grad = self.requires_grad or other.requires_grad
+        out_data = self.backend.div(self._data, other._data)
         out = Tensor(
-            self.backend.div(self._data, other._data),
-            requires_grad=req_grad,
+            out_data,
+            requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="/",
             backend=self.backend
@@ -430,23 +446,22 @@ class Tensor:
         def _backward():
             if out.grad is not None:
                 if self.requires_grad:
-                    # d(a/b)/da = 1/b
-                    inv_b = self.backend.div(self.backend.ones(()), other._data)
-                    d_self = self.backend.mul(inv_b, out.grad._data)
-                    d_self = self.backend.unbroadcast(d_self, self.shape)
+                    # d/da (a/b) = 1/b
+                    g_self = self.backend.div(out.grad._data, other._data)
+                    d_self = self.backend.unbroadcast(g_self, self.shape)
                     if self.grad is None:
-                        self.grad = Tensor(d_self, backend=self.backend)
+                        self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                     else:
                         self.grad._data = self.backend.add(self.grad._data, d_self)
-                        
                 if other.requires_grad:
-                    # d(a/b)/db = -a / (b^2)
+                    # d/db (a/b) = -a / (b^2)
                     b_sq = self.backend.mul(other._data, other._data)
                     neg_a = self.backend.neg(self._data)
-                    grad_b_raw = self.backend.mul(self.backend.div(neg_a, b_sq), out.grad._data)
-                    d_other = self.backend.unbroadcast(grad_b_raw, other.shape)
+                    deriv_b = self.backend.div(neg_a, b_sq)
+                    g_other = self.backend.mul(out.grad._data, deriv_b)
+                    d_other = self.backend.unbroadcast(g_other, other.shape)
                     if other.grad is None:
-                        other.grad = Tensor(d_other, backend=other.backend)
+                        other.grad = Tensor(d_other, dtype="float32", backend=self.backend)
                     else:
                         other.grad._data = self.backend.add(other.grad._data, d_other)
 
@@ -454,27 +469,32 @@ class Tensor:
         return out
 
     def __rtruediv__(self, other: Any) -> 'Tensor':
-        other_t = self._ensure_tensor_on_self_backend(other)
-        return other_t / self
+        other = self._ensure_tensor_on_self_backend(other)
+        return other.__truediv__(self)
 
     def __pow__(self, exponent: Union[int, float]) -> 'Tensor':
-        exp_val = float(exponent)
+        if not isinstance(exponent, (int, float)):
+            raise TypeError("Exponent must be a Python int or float")
+
+        out_data = self.backend.pow(self._data, float(exponent))
         out = Tensor(
-            self.backend.pow(self._data, exp_val),
+            out_data,
             requires_grad=self.requires_grad,
             _prev=(self,),
-            _op=f"**{exp_val}",
+            _op=f"**{exponent}",
             backend=self.backend
         )
 
         def _backward():
             if self.requires_grad and out.grad is not None:
-                # d(x^p)/dx = p * x^(p-1)
-                term = self.backend.mul(exp_val, self.backend.pow(self._data, exp_val - 1.0))
-                d_self = self.backend.mul(term, out.grad._data)
-                d_self = self.backend.unbroadcast(d_self, self.shape)
+                # d/dx (x^n) = n * x^(n-1)
+                deriv = self.backend.mul(
+                    self.backend.pow(self._data, exponent - 1.0),
+                    self.backend.from_data(float(exponent), dtype="float32")
+                )
+                d_self = self.backend.mul(deriv, out.grad._data)
                 if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
+                    self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                 else:
                     self.grad._data = self.backend.add(self.grad._data, d_self)
 
@@ -482,8 +502,9 @@ class Tensor:
         return out
 
     def __neg__(self) -> 'Tensor':
+        out_data = self.backend.neg(self._data)
         out = Tensor(
-            self.backend.neg(self._data),
+            out_data,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="neg",
@@ -494,408 +515,223 @@ class Tensor:
             if self.requires_grad and out.grad is not None:
                 d_self = self.backend.neg(out.grad._data)
                 if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
+                    self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                 else:
                     self.grad._data = self.backend.add(self.grad._data, d_self)
 
         out._backward = _backward
         return out
 
-    # =========================================================================
-    # Matrix Multiplication (@ / matmul)
-    # =========================================================================
-
-    def matmul(self, other: Any) -> 'Tensor':
+    def __matmul__(self, other: 'Tensor') -> 'Tensor':
         """
-        Matrix multiplication supporting every rank combination
-        where both operands are between 1D and 3D.
-
-        Supported:
-          - 1D @ 1D -> () (Scalar Dot Product)
-          - 1D @ 2D -> (N,) (1D Vector)
-          - 1D @ 3D -> (B, N) (2D Batch Matrix)
-          - 2D @ 1D -> (M,) (1D Vector)
-          - 2D @ 2D -> (M, N) (2D Matrix Multiplication)
-          - 2D @ 3D -> (B, M, N) (3D Batched Matrix)
-          - 3D @ 1D -> (B, M) (2D Matrix)
-          - 3D @ 2D -> (B, M, N) (3D Sequence / LoRA Projection)
-          - 3D @ 3D -> (B, M, N) (3D Transformer Attention Product)
-
-        Scalar operands (0D) and 4D+ operands are not supported.
-        For 3D @ 3D, batch dimensions must currently match.
+        Generalized N-D Batched Matrix Multiplication with right-aligned batch broadcasting.
         """
         other = self._ensure_tensor_on_self_backend(other)
-        kind = _classify_matmul(self.shape, other.shape)
-        
-        req_grad = self.requires_grad or other.requires_grad
+        out_data = self.backend.matmul(self._data, other._data)
         out = Tensor(
-            self.backend.matmul(self._data, other._data),
-            requires_grad=req_grad,
+            out_data,
+            requires_grad=self.requires_grad or other.requires_grad,
             _prev=(self, other),
             _op="@",
             backend=self.backend
         )
 
+        s1, s2 = self.shape, other.shape
+        r1, r2 = len(s1), len(s2)
+
         def _backward():
             if out.grad is None:
                 return
 
-            if kind == "1d_1d":
-                # A: (K,), B: (K,) -> Y: ()
+            # Case 1: 1D @ 1D -> scalar output
+            if r1 == 1 and r2 == 1:
                 if self.requires_grad:
-                    self._accumulate_grad_data(self.backend.mul(other._data, out.grad._data))
-                if other.requires_grad:
-                    other._accumulate_grad_data(other.backend.mul(self._data, out.grad._data))
-
-            elif kind == "1d_2d":
-                # A: (K,), B: (K, N) -> Y: (N,), dY: (N,)
-                # dA = dY @ B^T: (N,) @ (N, K) -> (K,)
-                # dB = outer(A, dY) = (K, 1) @ (1, N) -> (K, N)
-                if self.requires_grad:
-                    b_t = self.backend.transpose(other._data, axes=(1, 0))
-                    d_self = self.backend.matmul(out.grad._data, b_t)
+                    d_self = other._data if out.grad.shape == () else self.backend.mul(out.grad._data, other._data)
                     self._accumulate_grad_data(d_self)
                 if other.requires_grad:
-                    a_col = self.backend.reshape(self._data, (self.shape[0], 1))
-                    dy_row = self.backend.reshape(out.grad._data, (1, other.shape[1]))
-                    d_other = self.backend.matmul(a_col, dy_row)
+                    d_other = self._data if out.grad.shape == () else self.backend.mul(out.grad._data, self._data)
                     other._accumulate_grad_data(d_other)
+                return
 
-            elif kind == "1d_3d":
-                # A: (K,), B: (B, K, N) -> Y: (B, N), dY: (B, N)
-                # dA = sum_b dY[b] @ B[b]^T: sum over B ((N,) @ (N, K) -> (K,))
-                # dB[b] = outer(A, dY[b]) = (K, 1) @ (1, N) -> (K, N)
-                batch_size = other.shape[0]
-                if self.requires_grad:
-                    d_self = self.backend.zeros(self.shape)
-                    for b in range(batch_size):
-                        b_mat = self.backend.take(other._data, b, axis=0)
-                        b_t = self.backend.transpose(b_mat, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_self = self.backend.add(d_self, self.backend.matmul(dy_b, b_t))
-                    self._accumulate_grad_data(d_self)
-                if other.requires_grad:
-                    a_col = self.backend.reshape(self._data, (self.shape[0], 1))
-                    d_other_batches = []
-                    for b in range(batch_size):
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        dy_row = self.backend.reshape(dy_b, (1, other.shape[2]))
-                        d_other_batches.append(self.backend.matmul(a_col, dy_row))
-                    other._accumulate_grad_data(d_other_batches)
+            # Promote operands to 2D+ for derivative computation
+            # Grad G of shape out.shape
+            G = out.grad
+            A = self
+            B = other
 
-            elif kind == "2d_1d":
-                # A: (M, K), B: (K,) -> Y: (M,), dY: (M,)
-                # dA = outer(dY, B): (M, 1) @ (1, K) -> (M, K)
-                # dB = A^T @ dY: (K, M) @ (M,) -> (K,)
-                if self.requires_grad:
-                    dy_col = self.backend.reshape(out.grad._data, (self.shape[0], 1))
-                    b_row = self.backend.reshape(other._data, (1, other.shape[0]))
-                    d_self = self.backend.matmul(dy_col, b_row)
-                    self._accumulate_grad_data(d_self)
-                if other.requires_grad:
-                    a_t = self.backend.transpose(self._data, axes=(1, 0))
-                    d_other = self.backend.matmul(a_t, out.grad._data)
-                    other._accumulate_grad_data(d_other)
+            if r1 == 1:
+                # A was (K,) -> promoted to (1, K)
+                A_prom = A.reshape(1, s1[0])
+                G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
+            else:
+                A_prom = A
+                G_prom = G
 
-            elif kind == "2d_2d":
-                # A: (M, K), B: (K, N) -> Y: (M, N), dY: (M, N)
-                # dA = dY @ B^T: (M, N) @ (N, K) -> (M, K)
-                # dB = A^T @ dY: (K, M) @ (M, N) -> (K, N)
-                if self.requires_grad:
-                    b_t = self.backend.transpose(other._data, axes=(1, 0))
-                    d_self = self.backend.matmul(out.grad._data, b_t)
-                    self._accumulate_grad_data(d_self)
-                if other.requires_grad:
-                    a_t = self.backend.transpose(self._data, axes=(1, 0))
-                    d_other = self.backend.matmul(a_t, out.grad._data)
-                    other._accumulate_grad_data(d_other)
+            if r2 == 1:
+                # B was (K,) -> promoted to (K, 1)
+                B_prom = B.reshape(s2[0], 1)
+                if r1 > 1:
+                    G_prom = G.reshape(*G.shape, 1)
+            else:
+                B_prom = B
 
-            elif kind == "2d_3d":
-                # A: (M, K), B: (B, K, N) -> Y: (B, M, N), dY: (B, M, N)
-                # dA = sum_b dY[b] @ B[b]^T: sum over B ((M, N) @ (N, K) -> (M, K))
-                # dB[b] = A^T @ dY[b]: (K, M) @ (M, N) -> (K, N)
-                batch_size = other.shape[0]
-                if self.requires_grad:
-                    d_self = self.backend.zeros(self.shape)
-                    for b in range(batch_size):
-                        b_mat = self.backend.take(other._data, b, axis=0)
-                        b_t = self.backend.transpose(b_mat, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_self = self.backend.add(d_self, self.backend.matmul(dy_b, b_t))
-                    self._accumulate_grad_data(d_self)
-                if other.requires_grad:
-                    a_t = self.backend.transpose(self._data, axes=(1, 0))
-                    d_other_batches = []
-                    for b in range(batch_size):
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_other_batches.append(self.backend.matmul(a_t, dy_b))
-                    other._accumulate_grad_data(d_other_batches)
+            # dA_prom = G_prom @ B_prom^T
+            # dB_prom = A_prom^T @ G_prom
+            # Transpose last 2 axes
+            b_ndim = B_prom.ndim
+            b_axes = list(range(b_ndim))
+            b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
+            B_prom_T = B_prom.transpose(*b_axes)
 
-            elif kind == "3d_1d":
-                # A: (B, M, K), V: (K,) -> Y: (B, M), dY: (B, M)
-                # dA[b] = outer(dY[b], V): (M, 1) @ (1, K) -> (M, K)
-                # dV = sum_b A[b]^T @ dY[b]: sum over B ((K, M) @ (M,) -> (K,))
-                batch_size = self.shape[0]
-                if self.requires_grad:
-                    v_row = self.backend.reshape(other._data, (1, other.shape[0]))
-                    d_self_batches = []
-                    for b in range(batch_size):
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        dy_col = self.backend.reshape(dy_b, (self.shape[1], 1))
-                        d_self_batches.append(self.backend.matmul(dy_col, v_row))
-                    self._accumulate_grad_data(d_self_batches)
-                if other.requires_grad:
-                    d_other = self.backend.zeros(other.shape)
-                    for b in range(batch_size):
-                        a_mat = self.backend.take(self._data, b, axis=0)
-                        a_t = self.backend.transpose(a_mat, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_other = self.backend.add(d_other, self.backend.matmul(a_t, dy_b))
-                    other._accumulate_grad_data(d_other)
+            a_ndim = A_prom.ndim
+            a_axes = list(range(a_ndim))
+            a_axes[-2], a_axes[-1] = a_axes[-1], a_axes[-2]
+            A_prom_T = A_prom.transpose(*a_axes)
 
-            elif kind == "3d_2d":
-                # A: (B, M, K), W: (K, N) -> Y: (B, M, N), dY: (B, M, N)
-                # dA[b] = dY[b] @ W^T: (M, N) @ (N, K) -> (M, K)
-                # dW = sum_b A[b]^T @ dY[b]: (K, M) @ (M, N) -> (K, N)
-                batch_size = self.shape[0]
-                if self.requires_grad:
-                    w_t = self.backend.transpose(other._data, axes=(1, 0))
-                    d_self_batches = [
-                        self.backend.matmul(self.backend.take(out.grad._data, b, axis=0), w_t)
-                        for b in range(batch_size)
-                    ]
-                    self._accumulate_grad_data(d_self_batches)
-                if other.requires_grad:
-                    d_other = self.backend.zeros(other.shape)
-                    for b in range(batch_size):
-                        a_b = self.backend.take(self._data, b, axis=0)
-                        a_t = self.backend.transpose(a_b, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        batch_grad = self.backend.matmul(a_t, dy_b)
-                        d_other = self.backend.add(d_other, batch_grad)
-                    other._accumulate_grad_data(d_other)
+            if self.requires_grad:
+                dA_prom = G_prom @ B_prom_T
+                dA_unbroadcast = _unbroadcast_to(dA_prom, A_prom.shape)
+                if r1 == 1:
+                    dA_final = dA_unbroadcast.reshape(s1[0])
+                else:
+                    dA_final = dA_unbroadcast
+                self._accumulate_grad_data(dA_final._data)
 
-            elif kind == "3d_3d":
-                # A: (B, M, K), B: (B, K, N) -> Y: (B, M, N), dY: (B, M, N)
-                # dA[b] = dY[b] @ B[b]^T: (M, N) @ (N, K) -> (M, K)
-                # dB[b] = A[b]^T @ dY[b]: (K, M) @ (M, N) -> (K, N)
-                batch_size = self.shape[0]
-                if self.requires_grad:
-                    d_self_batches = []
-                    for b in range(batch_size):
-                        b_mat = self.backend.take(other._data, b, axis=0)
-                        b_t = self.backend.transpose(b_mat, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_self_batches.append(self.backend.matmul(dy_b, b_t))
-                    self._accumulate_grad_data(d_self_batches)
-                if other.requires_grad:
-                    d_other_batches = []
-                    for b in range(batch_size):
-                        a_mat = self.backend.take(self._data, b, axis=0)
-                        a_t = self.backend.transpose(a_mat, axes=(1, 0))
-                        dy_b = self.backend.take(out.grad._data, b, axis=0)
-                        d_other_batches.append(self.backend.matmul(a_t, dy_b))
-                    other._accumulate_grad_data(d_other_batches)
+            if other.requires_grad:
+                dB_prom = A_prom_T @ G_prom
+                dB_unbroadcast = _unbroadcast_to(dB_prom, B_prom.shape)
+                if r2 == 1:
+                    dB_final = dB_unbroadcast.reshape(s2[0])
+                else:
+                    dB_final = dB_unbroadcast
+                other._accumulate_grad_data(dB_final._data)
 
         out._backward = _backward
         return out
 
-    def __matmul__(self, other: Any) -> 'Tensor':
-        return self.matmul(other)
-
-    def __rmatmul__(self, other: Any) -> 'Tensor':
-        other_t = self._ensure_tensor_on_self_backend(other)
-        return other_t.matmul(self)
-
-    # =========================================================================
-    # Reductions: sum & mean
-    # =========================================================================
-
-    def sum(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        """Sum reduction with axis-aware gradient propagation."""
-        norm_axes = _normalize_axes(axis, self.ndim)
-        out_data = self.backend.sum(self._data, axis=axis, keepdims=keepdims)
+    def sum(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
+        ndim = self.ndim
+        norm_axes = _normalize_axes(axis, ndim)
+        sum_data = self.backend.sum(self._data, axis=norm_axes, keepdims=keepdims)
         out = Tensor(
-            out_data,
+            sum_data,
             requires_grad=self.requires_grad,
             _prev=(self,),
             _op="sum",
             backend=self.backend
         )
 
+        orig_shape = self.shape
         def _backward():
             if self.requires_grad and out.grad is not None:
-                grad_data = out.grad._data
                 if not keepdims:
-                    if axis is None or self.ndim == 0:
-                        grad_data = self.backend.reshape(grad_data, (1,) * self.ndim)
-                    else:
-                        pad_shape = list(self.shape)
-                        for a in norm_axes:
-                            pad_shape[a] = 1
-                        grad_data = self.backend.reshape(grad_data, tuple(pad_shape))
+                    pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
+                    grad_reshaped = self.backend.reshape(out.grad._data, pad_shape)
+                else:
+                    grad_reshaped = out.grad._data
 
-                ones_arr = self.backend.ones(self.shape)
-                d_self = self.backend.mul(ones_arr, grad_data)
+                # Expand along reduced axes
+                ones_data = self.backend.ones(orig_shape)
+                d_self = self.backend.mul(ones_data, grad_reshaped)
                 if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
+                    self.grad = Tensor(d_self, dtype="float32", backend=self.backend)
                 else:
                     self.grad._data = self.backend.add(self.grad._data, d_self)
 
         out._backward = _backward
         return out
 
-    def mean(self, axis: Union[int, Tuple[int, ...], None] = None, keepdims: bool = False) -> 'Tensor':
-        """Mean reduction with axis-aware gradient propagation."""
-        norm_axes = _normalize_axes(axis, self.ndim)
-        count = _reduced_count(self.shape, norm_axes)
-        out_data = self.backend.mean(self._data, axis=axis, keepdims=keepdims)
+    def max(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
+        """
+        Maximum reduction along specified axes with subgradient autograd routing.
+        """
+        ndim = self.ndim
+        norm_axes = _normalize_axes(axis, ndim)
+        max_data = self.backend.max(self._data, axis=norm_axes, keepdims=keepdims)
         out = Tensor(
-            out_data,
+            max_data,
             requires_grad=self.requires_grad,
             _prev=(self,),
-            _op="mean",
+            _op="max",
             backend=self.backend
         )
 
+        orig_shape = self.shape
         def _backward():
             if self.requires_grad and out.grad is not None:
-                grad_data = out.grad._data
                 if not keepdims:
-                    if axis is None or self.ndim == 0:
-                        grad_data = self.backend.reshape(grad_data, (1,) * self.ndim)
-                    else:
-                        pad_shape = list(self.shape)
-                        for a in norm_axes:
-                            pad_shape[a] = 1
-                        grad_data = self.backend.reshape(grad_data, tuple(pad_shape))
-
-                scale = 1.0 / float(count)
-                scale_arr = self.backend.mul(self.backend.ones(self.shape), scale)
-                d_self = self.backend.mul(scale_arr, grad_data)
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
+                    pad_shape = tuple(1 if i in norm_axes else orig_shape[i] for i in range(ndim))
+                    grad_reshaped = self.backend.reshape(out.grad._data, pad_shape)
+                    max_reshaped = self.backend.reshape(out._data, pad_shape)
                 else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
+                    grad_reshaped = out.grad._data
+                    max_reshaped = out._data
 
-        out._backward = _backward
-        return out
+                # Broadcast to orig_shape
+                ones_data = self.backend.ones(orig_shape)
+                b_grad = self.backend.mul(ones_data, grad_reshaped)
+                b_max = self.backend.mul(ones_data, max_reshaped)
 
-    # =========================================================================
-    # Non-linear Activations: relu, sigmoid, tanh
-    # =========================================================================
-
-    def relu(self) -> 'Tensor':
-        """Elementwise ReLU activation."""
-        out = Tensor(
-            self.backend.relu(self._data),
-            requires_grad=self.requires_grad,
-            _prev=(self,),
-            _op="relu",
-            backend=self.backend
-        )
-
-        def _backward():
-            if self.requires_grad and out.grad is not None:
-                # Mask: 1.0 if x > 0 else 0.0
-                flat_data = self.backend.to_flat_list(self._data)
-                flat_grad = self.backend.to_flat_list(out.grad._data)
-                d_flat = [g if x > 0 else 0.0 for x, g in zip(flat_data, flat_grad)]
-                d_self = self.backend.from_data(self.backend.reshape(d_flat, self.shape))
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
-                else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
-
-        out._backward = _backward
-        return out
-
-    def sigmoid(self) -> 'Tensor':
-        """Elementwise Sigmoid activation."""
-        sig_data = self.backend.sigmoid(self._data)
-        out = Tensor(
-            sig_data,
-            requires_grad=self.requires_grad,
-            _prev=(self,),
-            _op="sigmoid",
-            backend=self.backend
-        )
-
-        def _backward():
-            if self.requires_grad and out.grad is not None:
-                # d(sigmoid(x))/dx = sigmoid(x) * (1 - sigmoid(x))
-                one = self.backend.ones(self.shape)
-                one_minus_sig = self.backend.sub(one, out._data)
-                deriv = self.backend.mul(out._data, one_minus_sig)
-                d_self = self.backend.mul(deriv, out.grad._data)
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
-                else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
-
-        out._backward = _backward
-        return out
-
-    def tanh(self) -> 'Tensor':
-        """Elementwise Tanh activation."""
-        tanh_data = self.backend.tanh(self._data)
-        out = Tensor(
-            tanh_data,
-            requires_grad=self.requires_grad,
-            _prev=(self,),
-            _op="tanh",
-            backend=self.backend
-        )
-
-        def _backward():
-            if self.requires_grad and out.grad is not None:
-                # d(tanh(x))/dx = 1 - tanh(x)^2
-                one = self.backend.ones(self.shape)
-                tanh_sq = self.backend.mul(out._data, out._data)
-                deriv = self.backend.sub(one, tanh_sq)
-                d_self = self.backend.mul(deriv, out.grad._data)
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
-                else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
-
-        out._backward = _backward
-        return out
-
-    def clamp(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
-        """
-        Clamp elements in tensor between [min_val, max_val].
-        
-        Note on Subgradient:
-            At clamp boundaries (x == min_val or x == max_val), termux-train uses a pass-through subgradient of 1.0.
-        """
-        clamped_data = self.backend.clamp(self._data, min_val, max_val)
-        out = Tensor(
-            clamped_data,
-            requires_grad=self.requires_grad,
-            _prev=(self,),
-            _op="clamp",
-            backend=self.backend
-        )
-
-        def _backward():
-            if self.requires_grad and out.grad is not None:
-                # Gradient flows only through elements that are strictly within clamp bounds
+                # Mask where self._data == max_val
                 flat_x = self.backend.to_flat_list(self._data)
-                mask = [1.0 if ((min_val is None or v >= min_val) and (max_val is None or v <= max_val)) else 0.0 for v in flat_x]
-                mask_data = self.backend.from_data(self.backend.reshape(mask, self.shape))
-                d_self = self.backend.mul(mask_data, out.grad._data)
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
-                else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
+                flat_max = self.backend.to_flat_list(b_max)
+                flat_g = self.backend.to_flat_list(b_grad)
+
+                # Route gradient to maximum values (subgradient)
+                d_flat = [g if abs(x - m) < 1e-6 else 0.0 for x, m, g in zip(flat_x, flat_max, flat_g)]
+                d_self = self.backend.from_data(self.backend.reshape(d_flat, orig_shape), dtype="float32")
+                self._accumulate_grad_data(d_self)
 
         out._backward = _backward
         return out
 
-    def clip(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
-        """Alias for clamp."""
-        return self.clamp(min_val=min_val, max_val=max_val)
+    def mean(self, axis: Union[int, Tuple[int, ...], List[int], None] = None, keepdims: bool = False) -> 'Tensor':
+        ndim = self.ndim
+        norm_axes = _normalize_axes(axis, ndim)
+        count = _reduced_count(self.shape, norm_axes)
+        return self.sum(axis=norm_axes, keepdims=keepdims) / float(count)
+
+    def exp(self) -> 'Tensor':
+        """Elementwise natural exponential exp(x)."""
+        exp_data = self.backend.exp(self._data)
+        out = Tensor(
+            exp_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="exp",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                # d(exp(x))/dx = exp(x)
+                d_self = self.backend.mul(out._data, out.grad._data)
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
+
+    def sqrt(self, eps: float = 1e-8) -> 'Tensor':
+        """Elementwise square root sqrt(x)."""
+        sqrt_data = self.backend.sqrt(self._data)
+        out = Tensor(
+            sqrt_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="sqrt",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                # d(sqrt(x))/dx = 0.5 / sqrt(x + eps)
+                safe_out = self.backend.add(out._data, self.backend.from_data(eps, dtype="float32"))
+                inv_two_sqrt = self.backend.div(self.backend.from_data(0.5, dtype="float32"), safe_out)
+                d_self = self.backend.mul(inv_two_sqrt, out.grad._data)
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
 
     def log(self) -> 'Tensor':
         """Natural logarithm ln(x)."""
@@ -910,59 +746,168 @@ class Tensor:
 
         def _backward():
             if self.requires_grad and out.grad is not None:
-                # d(ln(x))/dx = 1 / x
                 inv_x = self.backend.div(self.backend.ones(self.shape), self._data)
                 d_self = self.backend.mul(inv_x, out.grad._data)
-                if self.grad is None:
-                    self.grad = Tensor(d_self, backend=self.backend)
-                else:
-                    self.grad._data = self.backend.add(self.grad._data, d_self)
+                self._accumulate_grad_data(d_self)
 
         out._backward = _backward
         return out
 
+    def relu(self) -> 'Tensor':
+        relu_data = self.backend.relu(self._data)
+        out = Tensor(
+            relu_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="relu",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                flat_data = self.backend.to_flat_list(self._data)
+                flat_grad = self.backend.to_flat_list(out.grad._data)
+                d_flat = [g if x > 0 else 0.0 for x, g in zip(flat_data, flat_grad)]
+                d_self = self.backend.from_data(self.backend.reshape(d_flat, self.shape), dtype="float32")
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
+
+    def sigmoid(self) -> 'Tensor':
+        sig_data = self.backend.sigmoid(self._data)
+        out = Tensor(
+            sig_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="sigmoid",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                one = self.backend.ones(self.shape)
+                one_minus_sig = self.backend.sub(one, out._data)
+                deriv = self.backend.mul(out._data, one_minus_sig)
+                d_self = self.backend.mul(deriv, out.grad._data)
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
+
+    def tanh(self) -> 'Tensor':
+        tanh_data = self.backend.tanh(self._data)
+        out = Tensor(
+            tanh_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="tanh",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                one = self.backend.ones(self.shape)
+                tanh_sq = self.backend.mul(out._data, out._data)
+                deriv = self.backend.sub(one, tanh_sq)
+                d_self = self.backend.mul(deriv, out.grad._data)
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
+
+    def clamp(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
+        clamped_data = self.backend.clamp(self._data, min_val, max_val)
+        out = Tensor(
+            clamped_data,
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="clamp",
+            backend=self.backend
+        )
+
+        def _backward():
+            if self.requires_grad and out.grad is not None:
+                flat_x = self.backend.to_flat_list(self._data)
+                mask = [1.0 if ((min_val is None or v >= min_val) and (max_val is None or v <= max_val)) else 0.0 for v in flat_x]
+                mask_data = self.backend.from_data(self.backend.reshape(mask, self.shape), dtype="float32")
+                d_self = self.backend.mul(mask_data, out.grad._data)
+                self._accumulate_grad_data(d_self)
+
+        out._backward = _backward
+        return out
+
+    def clip(self, min_val: Optional[float] = None, max_val: Optional[float] = None) -> 'Tensor':
+        return self.clamp(min_val=min_val, max_val=max_val)
+
     # =========================================================================
-    # Reverse-Mode Autograd Engine (Topological Sort)
+    # Transformer Math Primitives
     # =========================================================================
 
-    def backward(
-        self,
-        gradient: Optional['Tensor'] = None,
-        allow_implicit_grad: bool = False
-    ) -> None:
+    def logsumexp(self, axis: int = -1, keepdims: bool = False) -> 'Tensor':
         """
-        Execute Reverse-Mode Automatic Differentiation (Autograd).
-        Constructs DAG topological ordering via DFS and propagates gradients.
+        Numerically stable Log-Sum-Exp: logsumexp(x) = m + log(sum(exp(x - m)))
+        """
+        m = self.max(axis=axis, keepdims=True).detach()
+        shifted = self - m
+        exp_shifted = shifted.exp()
+        sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
+        log_sum = sum_exp.log()
+        out = m + log_sum
+        if not keepdims:
+            # Squeeze reduced axis
+            ndim = self.ndim
+            norm_axis = axis + ndim if axis < 0 else axis
+            new_shape = tuple(self.shape[i] for i in range(ndim) if i != norm_axis)
+            return out.reshape(new_shape)
+        return out
 
-        Gradient Policy:
-            - Scalar Tensor (shape=()): backward() is allowed without gradient (seed = 1.0).
-            - Non-Scalar Tensor: requires explicit `gradient=...` OR `allow_implicit_grad=True`.
+    def log_softmax(self, axis: int = -1) -> 'Tensor':
+        """Numerically stable Log-Softmax: log_softmax(x) = x - logsumexp(x)."""
+        lse = self.logsumexp(axis=axis, keepdims=True)
+        return self - lse
+
+    def softmax(self, axis: int = -1) -> 'Tensor':
+        """Numerically stable Softmax: softmax(x) = exp(log_softmax(x))."""
+        return self.log_softmax(axis=axis).exp()
+
+    # =========================================================================
+    # Reverse Mode Autograd Entrypoint (Iterative DAG Traversal)
+    # =========================================================================
+
+    def backward(self, gradient: Optional[Union['Tensor', Any]] = None, allow_implicit_grad: bool = False) -> None:
         """
+        Computes the gradient of current tensor w.r.t. graph leaves using iterative DFS.
+        """
+        # Iterative topological sort to prevent RecursionError on deep graphs
         topo: List['Tensor'] = []
-        visited: Set['Tensor'] = set()
+        visited: Set[int] = set()
+        stack: List[Tuple['Tensor', bool]] = [(self, False)]
 
-        def build_topo(v: 'Tensor'):
-            if v not in visited:
-                visited.add(v)
-                for child in v._prev:
-                    build_topo(child)
-                topo.append(v)
-
-        build_topo(self)
+        while stack:
+            node, processed = stack.pop()
+            node_id = id(node)
+            if node_id in visited:
+                continue
+            if processed:
+                visited.add(node_id)
+                topo.append(node)
+            else:
+                stack.append((node, True))
+                for child in node._prev:
+                    if id(child) not in visited:
+                        stack.append((child, False))
 
         # Seed the output gradient
         if gradient is None:
             if self.shape == ():
-                self.grad = Tensor(1.0, backend=self.backend)
+                self.grad = Tensor(1.0, dtype="float32", backend=self.backend)
             elif allow_implicit_grad:
-                self.grad = Tensor(self.backend.ones(self.shape), backend=self.backend)
+                self.grad = Tensor(self.backend.ones(self.shape), dtype="float32", backend=self.backend)
             else:
-                raise RuntimeError(
-                    "gradient must be specified for non-scalar Tensor. "
-                    "Use tensor.backward(gradient=...) or reduce with mean()/sum()."
-                )
+                raise RuntimeError("gradient must be specified for non-scalar Tensor.")
         else:
-            grad_tensor = gradient if isinstance(gradient, Tensor) else Tensor(gradient, backend=self.backend)
+            grad_tensor = gradient if isinstance(gradient, Tensor) else Tensor(gradient, dtype="float32", backend=self.backend)
             if grad_tensor.shape != self.shape:
                 raise RuntimeError(
                     f"Mismatch in shape: grad_output shape {grad_tensor.shape} != output shape {self.shape}"
@@ -979,9 +924,10 @@ class Tensor:
 
     def __repr__(self) -> str:
         data_str = str(self.tolist())
+        dtype_str = f", dtype='{self.dtype}'" if self.dtype != "float32" else ""
         req_str = f", requires_grad=True" if self.requires_grad else ""
         op_str = f", op='{self._op}'" if self._op else ""
-        return f"Tensor({data_str}, shape={self.shape}{req_str}{op_str})"
+        return f"Tensor({data_str}, shape={self.shape}{dtype_str}{req_str}{op_str})"
 
     def __str__(self) -> str:
         return self.__repr__()
@@ -991,29 +937,31 @@ class Tensor:
 # Factory Functions
 # =============================================================================
 
-def tensor(data: Any, requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
+def tensor(data: Any, dtype: Optional[str] = None, requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
     """Create a new Tensor."""
-    return Tensor(data, requires_grad=requires_grad, backend=backend)
+    return Tensor(data, dtype=dtype, requires_grad=requires_grad, backend=backend)
 
-def zeros(shape: Tuple[int, ...], requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
+def zeros(shape: Tuple[int, ...], dtype: str = "float32", requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
     """Create a Tensor filled with zeros."""
     b = backend or get_backend()
-    return Tensor(b.zeros(shape), requires_grad=requires_grad, backend=b)
+    return Tensor(b.zeros(shape, dtype=dtype), dtype=dtype, requires_grad=requires_grad, backend=b)
 
-def ones(shape: Tuple[int, ...], requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
+def ones(shape: Tuple[int, ...], dtype: str = "float32", requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
     """Create a Tensor filled with ones."""
     b = backend or get_backend()
-    return Tensor(b.ones(shape), requires_grad=requires_grad, backend=b)
+    return Tensor(b.ones(shape, dtype=dtype), dtype=dtype, requires_grad=requires_grad, backend=b)
 
-def zeros_like(t: Tensor, requires_grad: bool = False) -> Tensor:
+def zeros_like(t: Tensor, dtype: Optional[str] = None, requires_grad: bool = False) -> Tensor:
     """Create a zero Tensor with the same shape as input tensor."""
-    return zeros(t.shape, requires_grad=requires_grad, backend=t.backend)
+    dt = dtype or t.dtype
+    return zeros(t.shape, dtype=dt, requires_grad=requires_grad, backend=t.backend)
 
-def ones_like(t: Tensor, requires_grad: bool = False) -> Tensor:
+def ones_like(t: Tensor, dtype: Optional[str] = None, requires_grad: bool = False) -> Tensor:
     """Create a one Tensor with the same shape as input tensor."""
-    return ones(t.shape, requires_grad=requires_grad, backend=t.backend)
+    dt = dtype or t.dtype
+    return ones(t.shape, dtype=dt, requires_grad=requires_grad, backend=t.backend)
 
 def randn(shape: Tuple[int, ...], mean: float = 0.0, std: float = 1.0, requires_grad: bool = False, backend: Optional[BaseBackend] = None) -> Tensor:
     """Create a Tensor with Gaussian normal distributed random values."""
     b = backend or get_backend()
-    return Tensor(b.randn(shape, mean=mean, std=std), requires_grad=requires_grad, backend=b)
+    return Tensor(b.randn(shape, mean=mean, std=std), dtype="float32", requires_grad=requires_grad, backend=b)

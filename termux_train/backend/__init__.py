@@ -26,8 +26,13 @@ def available_backends() -> List[str]:
     """Return list of available compute backend names."""
     return list(_BACKENDS.keys())
 
-def get_backend() -> BaseBackend:
-    """Return the currently active compute backend."""
+def get_backend(name: Optional[str] = None) -> BaseBackend:
+    """Return the specified or currently active compute backend."""
+    if name is not None:
+        name_clean = name.lower().strip()
+        if name_clean not in _BACKENDS:
+            raise ValueError(f"Backend '{name}' is not available. Available: {available_backends()}")
+        return _BACKENDS[name_clean]
     return _BACKENDS[_CURRENT_BACKEND_NAME]
 
 def set_backend(name: str = "auto") -> BaseBackend:

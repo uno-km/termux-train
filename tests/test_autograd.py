@@ -410,14 +410,14 @@ def test_matmul_all_shape_mismatches_and_unsupported(active_backend):
     with pytest.raises(ValueError):
         _ = Tensor([[[1.0, 2.0]]]) @ Tensor([[[1.0], [2.0], [3.0]]])
 
-    # 10. 3D@3D batch mismatch
+    # 10. 3D@3D incompatible batch broadcast
     with pytest.raises(ValueError):
-        _ = Tensor([[[1.0, 2.0]]]) @ Tensor([[[1.0], [2.0]], [[3.0], [4.0]]])
+        _ = Tensor([[[1.0, 2.0]], [[1.0, 2.0]], [[1.0, 2.0]]]) @ Tensor([[[1.0], [2.0]], [[3.0], [4.0]]])
 
-    # 11. 4D+ unsupported
-    with pytest.raises(NotImplementedError):
-        _ = Tensor([[[[1.0, 2.0]]]]) @ Tensor([[[[3.0], [4.0]]]])
+    # 11. 4D @ 4D is fully supported in N-D matmul
+    res4d = Tensor([[[[1.0, 2.0]]]]) @ Tensor([[[[3.0], [4.0]]]])
+    assert res4d.shape == (1, 1, 1, 1)
 
     # 12. 0D input unsupported
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="Cannot perform matmul with scalar operand"):
         _ = Tensor(2.0) @ Tensor(3.0)
