@@ -19,33 +19,35 @@ SITE_URL = "https://uno-km.github.io/termux-train"
 VERSION = "v0.1.0 (Official Release)"
 
 def get_header(active_page):
-    return f"""    <header>
+    return """    <header>
         <a href="index.html" class="header-brand">
             <img src="favicon.svg" alt="termux-train Logo">
             <h1 data-i18n="common.brand">termux-train</h1>
         </a>
         <div class="header-controls">
-            <span class="release-tag" data-i18n="common.releaseTag">{VERSION}</span>
+            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0 (Native)</span>
             <div class="lang-selector-wrapper">
-                <select class="lang-select" onchange="if(window.I18n) window.I18n.setLanguage(this.value)">
+                <select class="lang-select" onchange="if(window.i18nManager) window.i18nManager.setLanguage(this.value); else if(window.I18n) window.I18n.setLanguage(this.value)">
                     <option value="en">🇺🇸 English</option>
                     <option value="ko">🇰🇷 한국어</option>
                     <option value="ja">🇯🇵 日本語</option>
                     <option value="zh">🇨🇳 简体中文</option>
                     <option value="es">🇪🇸 Español</option>
-                    <option value="hi">🇮🇳 हिन्दी</option>
+                    <option value="de">🇩🇪 Deutsch</option>
                 </select>
             </div>
             <a href="https://pypi.org/project/termux-train/" target="_blank" class="header-btn" data-i18n="common.pypiBtn">PyPI (pip)</a>
-            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub Repository</a>
+            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub</a>
         </div>
     </header>"""
 
 def get_sidebar(active_page):
-    pages = [
+    pages_overview = [
         ('index.html', 'common.nav.home', 'Home / Architecture'),
-        ('installation.html', 'common.nav.installation', 'Installation Guide (pip)'),
+        ('installation.html', 'common.nav.installation', 'Installation Guide'),
         ('quickstart.html', 'common.nav.quickstart', 'Quickstart & Recipes'),
+    ]
+    pages_reference = [
         ('models.html', 'common.nav.models', 'Tiny Models & LoRA Hub'),
         ('training-guide.html', 'common.nav.guide', 'Training Manual & Recipes'),
         ('api-reference.html', 'common.nav.apiReference', '100% Full API Reference'),
@@ -57,20 +59,28 @@ def get_sidebar(active_page):
     sidebar_html = """        <nav class="sidebar">
             <h3 data-i18n="common.nav.overview">Overview</h3>
             <ul>"""
-    
-    for href, i18n_key, title in pages:
+    for href, i18n_key, title in pages_overview:
         active_class = ' class="active"' if href == active_page else ''
         sidebar_html += f"""
                 <li><a href="{href}"{active_class} data-i18n="{i18n_key}">{title}</a></li>"""
     
     sidebar_html += """
             </ul>
-            <h3 data-i18n="common.nav.advanced">AI Agent Protocol &amp; Feeds</h3>
+            <h3 data-i18n="common.nav.reference">Official Reference</h3>
+            <ul>"""
+    for href, i18n_key, title in pages_reference:
+        active_class = ' class="active"' if href == active_page else ''
+        sidebar_html += f"""
+                <li><a href="{href}"{active_class} data-i18n="{i18n_key}">{title}</a></li>"""
+    
+    sidebar_html += """
+            </ul>
+            <h3 data-i18n="common.nav.aiSpecs">AI Agent Protocol &amp; Feeds</h3>
             <ul>
                 <li><a href="llms.txt" target="_blank">llms.txt (AI Agent Context)</a></li>
-                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Architecture Spec)</a></li>
-                <li><a href="rss.xml" target="_blank">rss.xml (Crawler News Feed)</a></li>
-                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Search Sitemap)</a></li>
+                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Spec)</a></li>
+                <li><a href="robots.txt" target="_blank">robots.txt (AI Crawlers)</a></li>
+                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Sitemap)</a></li>
             </ul>
         </nav>"""
     return sidebar_html
@@ -147,15 +157,15 @@ def build_index():
 {get_sidebar('index.html')}
         <main class="content">
             <section class="hero-panel">
-                <div class="badge-row" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
+                <div class="badges-bar" style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;">
                     <a href="https://pypi.org/project/termux-train/" target="_blank"><img src="https://img.shields.io/pypi/v/termux-train.svg?color=0066cc&logo=pypi&logoColor=white" alt="PyPI Version"></a>
                     <a href="https://pypi.org/project/termux-train/" target="_blank"><img src="https://img.shields.io/pypi/dm/termux-train.svg?color=00f5d4&logo=pypi&logoColor=white" alt="PyPI Monthly Downloads"></a>
                     <a href="https://pepy.tech/project/termux-train" target="_blank"><img src="https://img.shields.io/pepy/dt/termux-train.svg?color=blue&logo=pypi&logoColor=white" alt="PyPI Total Downloads"></a>
-                    <span class="badge badge-accent">Audit Score: 100/100 (Grade A+)</span>
-                    <span class="badge badge-success">AMEVA Foundation</span>
+                    <span class="release-tag">Audit Score: 100/100 (Grade A+)</span>
+                    <span class="release-tag">AMEVA Foundation</span>
                 </div>
                 <h2 data-i18n="home.title">termux-train</h2>
-                <p class="lead" data-i18n="home.subtitle">Native On-Device Deep Learning &amp; LoRA Training Framework for Android Termux (ARM64 Bionic)</p>
+                <p class="subtitle" data-i18n="home.subtitle">Native On-Device Deep Learning &amp; LoRA Training Framework for Android Termux (ARM64 Bionic)</p>
             </section>
 
             <div class="callout callout-info" style="margin: 20px 0; border-left: 4px solid var(--accent-cyan);">
@@ -177,28 +187,28 @@ def build_index():
             </section>
 
             <h3 data-i18n="home.capTitle" style="margin-top: 32px;">Key Capabilities &amp; Mobile Architecture</h3>
-            <div class="feature-matrix-grid">
-                <div class="feature-box">
+            <div class="features-grid">
+                <div class="feature-card">
                     <h4>⚡ Pure Python Autograd Core</h4>
                     <p>Zero C++ dependency dynamic computation graph with reverse-mode DAG autograd. Runs everywhere without compilation.</p>
                 </div>
-                <div class="feature-box">
+                <div class="feature-card">
                     <h4>🎯 On-Device LoRA Adapters</h4>
                     <p>Freeze 96%+ base weights and fine-tune low-rank adapters with &lt;100KB SafeTensors footprint.</p>
                 </div>
-                <div class="feature-box">
+                <div class="feature-card">
                     <h4>🧠 RoPE &amp; Incremental KV Cache</h4>
                     <p>Rotary Position Embedding with O(0) learnable parameters and O(1) step generation cache.</p>
                 </div>
-                <div class="feature-box">
+                <div class="feature-card">
                     <h4>💾 SafeTensors Zero-Copy I/O</h4>
                     <p>HuggingFace-compatible binary serialization eliminating Python pickle memory bloat and LMK crashes.</p>
                 </div>
-                <div class="feature-box">
+                <div class="feature-card">
                     <h4>📦 Streaming MMap Datasets</h4>
                     <p>Stream multi-gigabyte token datasets directly from disk via kernel page cache without consuming mobile RAM.</p>
                 </div>
-                <div class="feature-box">
+                <div class="feature-card">
                     <h4>🚀 Official PyPI Distribution</h4>
                     <p>Install with single command <code>pip install termux-train</code> across Android Termux, Linux, Windows, macOS.</p>
                 </div>
@@ -238,7 +248,7 @@ def build_installation():
 {get_sidebar('installation.html')}
         <main class="content">
             <h2 data-i18n="installation.title">Installation Guide (PyPI &amp; Termux)</h2>
-            <p class="lead" data-i18n="installation.subtitle">Step-by-step setup instructions for Android Termux, Linux, Windows, and macOS.</p>
+            <p class="subtitle" data-i18n="installation.subtitle">Step-by-step setup instructions for Android Termux, Linux, Windows, and macOS.</p>
 
             <div class="tabs-container" style="margin-top: 24px;">
                 <div class="tab-header">
@@ -306,7 +316,7 @@ def build_quickstart():
 {get_sidebar('quickstart.html')}
         <main class="content">
             <h2 data-i18n="quickstart.title">Quickstart &amp; Practical Recipes</h2>
-            <p class="lead" data-i18n="quickstart.subtitle">Build, train, and recover neural networks with crash-resilient checkpoints.</p>
+            <p class="subtitle" data-i18n="quickstart.subtitle">Build, train, and recover neural networks with crash-resilient checkpoints.</p>
 
             <h3>Recipe 1: Non-Linear XOR Classification</h3>
             <pre><code class="language-python">from termux_train import Tensor, nn, optim
@@ -369,7 +379,7 @@ def build_models():
 {get_sidebar('models.html')}
         <main class="content">
             <h2 data-i18n="models.title">Tiny Models &amp; LoRA Hub</h2>
-            <p class="lead" data-i18n="models.subtitle">Pre-configured architectures for on-device Transformers, Whisper speech recognition, and low-rank adapters.</p>
+            <p class="subtitle" data-i18n="models.subtitle">Pre-configured architectures for on-device Transformers, Whisper speech recognition, and low-rank adapters.</p>
 
             <div class="callout callout-info" style="margin: 20px 0;">
                 <strong>📚 Full Technical Manual:</strong> See our dedicated <a href="training-guide.html" style="color: var(--primary-color); font-weight: 700;">On-Device Tiny Model &amp; Small LLM Training Guide</a> for in-depth step-by-step instructions.
@@ -422,7 +432,7 @@ def build_training_guide():
 {get_sidebar('training-guide.html')}
         <main class="content">
             <h2 data-i18n="guide.title">On-Device Tiny Model &amp; Small LLM Training Manual</h2>
-            <p class="lead" data-i18n="guide.subtitle">Comprehensive engineering guide for training RoPE Transformers, Whisper LoRA, and DocFold models on mobile hardware.</p>
+            <p class="subtitle" data-i18n="guide.subtitle">Comprehensive engineering guide for training RoPE Transformers, Whisper LoRA, and DocFold models on mobile hardware.</p>
 
             <h3>1. Mobile Hardware Constraints &amp; LMK Defense</h3>
             <p>Android OS triggers the <strong>Low Memory Killer (LMK)</strong> when free memory falls below 300MB. termux-train avoids this via:</p>
@@ -492,7 +502,7 @@ def build_api_reference():
 {get_sidebar('api-reference.html')}
         <main class="content">
             <h2 data-i18n="api.title">100% Full API Reference</h2>
-            <p class="lead" data-i18n="api.subtitle">Complete specification of Tensor, Module, Optimizer, Checkpoint, and Tokenizer classes.</p>
+            <p class="subtitle" data-i18n="api.subtitle">Complete specification of Tensor, Module, Optimizer, Checkpoint, and Tokenizer classes.</p>
 
             <h3>1. Core Tensor Module (<code>termux_train.Tensor</code>)</h3>
             <table class="spec-table">
@@ -551,7 +561,7 @@ def build_advanced_parameters():
 {get_sidebar('advanced-parameters.html')}
         <main class="content">
             <h2 data-i18n="advancedParams.title">Mobile Memory Management &amp; INT8 Quantization</h2>
-            <p class="lead" data-i18n="advancedParams.subtitle">Guidelines for MMap disk streaming, SafeTensors zero-copy serialization, and LMK defense.</p>
+            <p class="subtitle" data-i18n="advancedParams.subtitle">Guidelines for MMap disk streaming, SafeTensors zero-copy serialization, and LMK defense.</p>
 
             <h3>1. SafeTensors Zero-Copy Binary Architecture</h3>
             <p>Traditional PyTorch Python pickling creates duplicate memory copies. SafeTensors maps contiguous binary buffers directly to memory:</p>
@@ -595,7 +605,7 @@ def build_benchmarks():
 {get_sidebar('benchmarks.html')}
         <main class="content">
             <h2 data-i18n="benchmarks.title">Performance &amp; Hardware Benchmarks</h2>
-            <p class="lead" data-i18n="benchmarks.subtitle">Empirical latency, throughput, and memory consumption across mobile CPUs.</p>
+            <p class="subtitle" data-i18n="benchmarks.subtitle">Empirical latency, throughput, and memory consumption across mobile CPUs.</p>
 
             <h3>1. 0-Point Baseline Production Audit Scorecard</h3>
             <table class="benchmark-table">
@@ -603,12 +613,12 @@ def build_benchmarks():
                     <tr><th>Pillar</th><th>Metric Target</th><th>Pure Python Backend</th><th>NumPy (OpenBLAS NEON)</th><th>Score</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td><strong>Pillar 1: Autograd &amp; Math</strong></td><td>&lt; 5.0 ms</td><td>1.13 ms</td><td>0.99 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 2: Transformer &amp; RoPE</strong></td><td>&lt; 2000 ms</td><td>9179 ms</td><td>1072 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 3: Memory Efficiency</strong></td><td>&lt; 100 ms</td><td>65.7 ms</td><td>20.1 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 4: Performance Latency</strong></td><td>&lt; 1000 ms</td><td>6253 ms</td><td>622.5 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr><td><strong>Pillar 5: Checkpoint Resilience</strong></td><td>&lt; 50 ms</td><td>40.5 ms</td><td>21.2 ms</td><td><span class="badge badge-success">20.0 / 20.0 pts</span></td></tr>
-                    <tr style="background: var(--primary-light);"><td><strong>TOTAL SCORE</strong></td><td colspan="3" style="text-align: right; font-weight: 700;">100.0 / 100.0</td><td><span class="badge badge-accent">Grade A+ (PERFECT)</span></td></tr>
+                    <tr><td><strong>Pillar 1: Autograd &amp; Math</strong></td><td>&lt; 5.0 ms</td><td>1.13 ms</td><td>0.99 ms</td><td><span class="release-tag">20.0 / 20.0 pts</span></td></tr>
+                    <tr><td><strong>Pillar 2: Transformer &amp; RoPE</strong></td><td>&lt; 2000 ms</td><td>9179 ms</td><td>1072 ms</td><td><span class="release-tag">20.0 / 20.0 pts</span></td></tr>
+                    <tr><td><strong>Pillar 3: Memory Efficiency</strong></td><td>&lt; 100 ms</td><td>65.7 ms</td><td>20.1 ms</td><td><span class="release-tag">20.0 / 20.0 pts</span></td></tr>
+                    <tr><td><strong>Pillar 4: Performance Latency</strong></td><td>&lt; 1000 ms</td><td>6253 ms</td><td>622.5 ms</td><td><span class="release-tag">20.0 / 20.0 pts</span></td></tr>
+                    <tr><td><strong>Pillar 5: Checkpoint Resilience</strong></td><td>&lt; 50 ms</td><td>40.5 ms</td><td>21.2 ms</td><td><span class="release-tag">20.0 / 20.0 pts</span></td></tr>
+                    <tr style="background: var(--primary-light);"><td><strong>TOTAL SCORE</strong></td><td colspan="3" style="text-align: right; font-weight: 700;">100.0 / 100.0</td><td><span class="release-tag">Grade A+ (PERFECT)</span></td></tr>
                 </tbody>
             </table>
 
@@ -640,12 +650,12 @@ def build_versions():
 {get_sidebar('versions.html')}
         <main class="content">
             <h2 data-i18n="versions.title">Version Archive &amp; Changelog</h2>
-            <p class="lead" data-i18n="versions.subtitle">Release history, changelog, and roadmap milestones.</p>
+            <p class="subtitle" data-i18n="versions.subtitle">Release history, changelog, and roadmap milestones.</p>
 
             <div class="card" style="margin-top: 24px; border-left: 4px solid var(--primary-color);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <h3 style="margin: 0; color: var(--primary-color);">v0.1.0 (Official Public Release)</h3>
-                    <span class="badge badge-primary">2026-08-20</span>
+                    <span class="release-tag">2026-08-20</span>
                 </div>
                 <ul style="margin-left: 20px; line-height: 1.8;">
                     <li><strong>Official PyPI Release</strong>: <code>pip install termux-train</code> live on PyPI.</li>
