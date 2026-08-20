@@ -115,7 +115,8 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Product Commit**: `6a368c2` (`Add Tensor dtype foundation, iterative autograd, and generalized ND matmul`)
 - **Traceability Commit**: `363bb9c` (`Record SCRUM-315 implementation commit`)
 - **Hardening Commit**: `9a3ff76` (`Harden Dtype promotion, inplace mutation guards, IEEE 754 compliance, and atomic transactions`)
-- **Host Tests**: `519 passed, 5 warnings` (33 dtype, transformer math & hardening tests 100% PASS)
+- **Lifecycle & Setup Commit**: `55b916a` (`Add Big-Tech autograd lifecycle: no_grad, in-flight DAG release, selective saving, and NumPy setup`)
+- **Host Tests**: `527 passed, 5 warnings` (41 dtype, transformer math, hardening & lifecycle tests 100% PASS)
 - **Files**:
   - `docs/tiny_transformer_spec.md`
   - `termux_train/tensor.py`
@@ -124,8 +125,10 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
   - `termux_train/backend/numpy_backend.py`
   - `termux_train/nn/module.py`
   - `termux_train/optim/optimizer.py`
+  - `scripts/setup_termux.sh`
   - `tests/test_dtype.py`
   - `tests/test_transformer_math.py`
   - `tests/test_audit_hardening.py`
+  - `tests/test_autograd_lifecycle.py`
 - **Jira Status**: `검토 중 (Ready for Device Validation)`
 - **Android Termux Gate**: `PENDING`
