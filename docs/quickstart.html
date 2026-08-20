@@ -52,19 +52,19 @@
             <h1 data-i18n="common.brand">termux-train</h1>
         </a>
         <div class="header-controls">
-            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0-alpha (Native)</span>
+            <span class="release-tag" data-i18n="common.releaseTag">v0.1.0 (Native)</span>
             <div class="lang-selector-wrapper">
-                <select class="lang-select" onchange="if(window.I18n) window.I18n.setLanguage(this.value)">
+                <select class="lang-select" onchange="if(window.i18nManager) window.i18nManager.setLanguage(this.value); else if(window.I18n) window.I18n.setLanguage(this.value)">
                     <option value="en">🇺🇸 English</option>
                     <option value="ko">🇰🇷 한국어</option>
                     <option value="ja">🇯🇵 日本語</option>
                     <option value="zh">🇨🇳 简体中文</option>
                     <option value="es">🇪🇸 Español</option>
-                    <option value="hi">🇮🇳 हिन्दी</option>
+                    <option value="de">🇩🇪 Deutsch</option>
                 </select>
             </div>
             <a href="https://pypi.org/project/termux-train/" target="_blank" class="header-btn" data-i18n="common.pypiBtn">PyPI (pip)</a>
-            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub Repository</a>
+            <a href="https://github.com/uno-km/termux-train" target="_blank" class="header-btn primary" data-i18n="common.githubBtn">GitHub</a>
         </div>
     </header>
     <div class="container">
@@ -72,8 +72,11 @@
             <h3 data-i18n="common.nav.overview">Overview</h3>
             <ul>
                 <li><a href="index.html" data-i18n="common.nav.home">Home / Architecture</a></li>
-                <li><a href="installation.html" data-i18n="common.nav.installation">Installation Guide (pip)</a></li>
+                <li><a href="installation.html" data-i18n="common.nav.installation">Installation Guide</a></li>
                 <li><a href="quickstart.html" class="active" data-i18n="common.nav.quickstart">Quickstart & Recipes</a></li>
+            </ul>
+            <h3 data-i18n="common.nav.reference">Official Reference</h3>
+            <ul>
                 <li><a href="models.html" data-i18n="common.nav.models">Tiny Models & LoRA Hub</a></li>
                 <li><a href="training-guide.html" data-i18n="common.nav.guide">Training Manual & Recipes</a></li>
                 <li><a href="api-reference.html" data-i18n="common.nav.apiReference">100% Full API Reference</a></li>
@@ -81,17 +84,17 @@
                 <li><a href="benchmarks.html" data-i18n="common.nav.benchmarks">Benchmarks & Hardware</a></li>
                 <li><a href="versions.html" data-i18n="common.nav.versions">Version Archive</a></li>
             </ul>
-            <h3 data-i18n="common.nav.advanced">AI Agent Protocol &amp; Feeds</h3>
+            <h3 data-i18n="common.nav.aiSpecs">AI Agent Protocol &amp; Feeds</h3>
             <ul>
                 <li><a href="llms.txt" target="_blank">llms.txt (AI Agent Context)</a></li>
-                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Architecture Spec)</a></li>
-                <li><a href="rss.xml" target="_blank">rss.xml (Crawler News Feed)</a></li>
-                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Search Sitemap)</a></li>
+                <li><a href="llms-full.txt" target="_blank">llms-full.txt (Full Spec)</a></li>
+                <li><a href="robots.txt" target="_blank">robots.txt (AI Crawlers)</a></li>
+                <li><a href="sitemap.xml" target="_blank">sitemap.xml (Sitemap)</a></li>
             </ul>
         </nav>
         <main class="content">
             <h2 data-i18n="quickstart.title">Quickstart &amp; Practical Recipes</h2>
-            <p class="lead" data-i18n="quickstart.subtitle">Build, train, and recover neural networks with crash-resilient checkpoints.</p>
+            <p class="subtitle" data-i18n="quickstart.subtitle">Build, train, and recover neural networks with crash-resilient checkpoints.</p>
 
             <h3>Recipe 1: Non-Linear XOR Classification</h3>
             <pre><code class="language-python">from termux_train import Tensor, nn, optim
