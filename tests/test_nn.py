@@ -246,6 +246,6 @@ def test_linear_shape_errors_and_bias_false(active_backend):
     with pytest.raises(ValueError):
         _ = l(Tensor(1.0))
 
-    # 4. 4D input error
-    with pytest.raises(ValueError):
-        _ = l(Tensor([[[[1.0, 2.0]]]]))
+    # 4. 4D input is supported in N-D Linear (e.g. for Multi-Head Attention)
+    out4 = l(Tensor([[[[1.0, 2.0]]]]))
+    assert out4.shape == (1, 1, 1, 3)

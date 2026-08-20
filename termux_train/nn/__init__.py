@@ -9,7 +9,16 @@ from .parameter import Parameter
 from .linear import Linear
 from .sequential import Sequential
 from .activations import ReLU, Sigmoid, Tanh
-from .loss import mse_loss, MSELoss, bce_loss, BCELoss
+from .loss import (
+    mse_loss,
+    MSELoss,
+    bce_loss,
+    BCELoss,
+    bce_with_logits_loss,
+    BCEWithLogitsLoss,
+    cross_entropy_loss,
+    CrossEntropyLoss,
+)
 from .lora import (
     LoRALinear,
     adapter_parameters,
@@ -19,6 +28,9 @@ from .lora import (
     merge_lora_adapters,
     unmerge_lora_adapters,
 )
+
+# Alias
+binary_cross_entropy_with_logits = bce_with_logits_loss = BCEWithLogitsLoss
 
 __all__ = [
     "Module",
@@ -32,6 +44,11 @@ __all__ = [
     "MSELoss",
     "bce_loss",
     "BCELoss",
+    "bce_with_logits_loss",
+    "binary_cross_entropy_with_logits",
+    "BCEWithLogitsLoss",
+    "cross_entropy_loss",
+    "CrossEntropyLoss",
     "LoRALinear",
     "adapter_parameters",
     "named_adapter_parameters",

@@ -4,14 +4,14 @@ termux_train.tensor
 Core Multi-Dimensional Tensor Class with Dynamic DAG Autograd Engine.
 Supports multi-dtype representation (float32, int64, bool), explicit Type Promotion,
 in-place version tracking, in-flight DAG dissection (instant memory release on backward),
-selective value saving, iterative DAG traversal, generalized N-D batched matmul,
-no_grad context manager, and Transformer mathematical primitives.
+3-color cyclic DAG protection, selective value saving, iterative DAG traversal,
+generalized N-D batched matmul, no_grad context manager, and Transformer mathematical primitives.
 """
 
 import functools
 import math
 from contextvars import ContextVar
-from typing import Any, Tuple, Set, List, Optional, Union, Callable
+from typing import Any, Tuple, Set, List, Optional, Union, Callable, Dict
 from .backend import get_backend, BaseBackend
 
 VALID_DTYPES = {"float32", "int64", "bool"}
@@ -170,6 +170,7 @@ class Tensor:
         self._op: str = _op
         self._version: int = 0
         self._grad_fn_state: str = "live" if (effective_requires_grad and _prev) else "leaf"
+        self._base: Optional['Tensor'] = None
 
     @classmethod
     def is_grad_enabled(cls) -> bool:
@@ -187,6 +188,8 @@ class Tensor:
             self._data = self.backend.from_data(value, dtype=self.dtype)
         if bump_version:
             self._version += 1
+            if self._base is not None:
+                self._base._version += 1
 
     def _accumulate_grad_data(self, grad_data: Any) -> None:
         """Accumulate incoming raw gradient data into self.grad safely."""
@@ -322,6 +325,7 @@ class Tensor:
             _op="reshape",
             backend=self.backend
         )
+        out._base = self
 
         if out.requires_grad:
             orig_shape = self.shape
@@ -376,6 +380,7 @@ class Tensor:
             _op="transpose",
             backend=self.backend
         )
+        out._base = self
 
         if out.requires_grad:
             inv_axes = _invert_permutation(axes_tuple)
@@ -1017,13 +1022,47 @@ class Tensor:
     def logsumexp(self, axis: int = -1, keepdims: bool = False) -> 'Tensor':
         """
         Numerically stable Log-Sum-Exp: logsumexp(x) = m + log(sum(exp(x - m)))
+        Safely handles all-negative-infinity rows without producing NaN.
         """
         m = self.max(axis=axis, keepdims=True).detach()
-        shifted = self - m
-        exp_shifted = shifted.exp()
-        sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
-        log_sum = sum_exp.log()
-        out = m + log_sum
+        backend = self.backend
+        flat_m = backend.to_flat_list(m._data)
+        has_neginf = any(math.isinf(v) and v < 0 for v in flat_m)
+
+        if has_neginf:
+            safe_m_flat = [0.0 if (math.isinf(v) and v < 0) else v for v in flat_m]
+            safe_m_data = backend.from_data(backend.reshape(safe_m_flat, m.shape), dtype="float32")
+            safe_m = Tensor(safe_m_data, dtype="float32", backend=backend)
+            shifted = self - safe_m
+            exp_shifted = shifted.exp()
+            sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
+            log_sum = sum_exp.log()
+            out = safe_m + log_sum
+
+            flat_out = backend.to_flat_list(out._data)
+            final_flat = [-float('inf') if (math.isinf(orig_m) and orig_m < 0) else v
+                          for v, orig_m in zip(flat_out, flat_m)]
+            final_data = backend.from_data(backend.reshape(final_flat, out.shape), dtype="float32")
+            out = Tensor(final_data, dtype="float32", requires_grad=self.requires_grad, _prev=(self,), _op="logsumexp", backend=backend)
+            if out.requires_grad:
+                def _backward():
+                    if out.grad is not None:
+                        lse_b = backend.mul(backend.ones(self.shape), out._data)
+                        flat_lse = backend.to_flat_list(lse_b)
+                        flat_x = backend.to_flat_list(self._data)
+                        flat_g = backend.to_flat_list(out.grad._data)
+                        d_flat = [0.0 if (math.isinf(lv) and lv < 0) else g * math.exp(x - lv)
+                                  for g, x, lv in zip(flat_g, flat_x, flat_lse)]
+                        d_self = backend.from_data(backend.reshape(d_flat, self.shape), dtype="float32")
+                        self._accumulate_grad_data(d_self)
+                _attach_grad_fn(out, (self,), _backward)
+        else:
+            shifted = self - m
+            exp_shifted = shifted.exp()
+            sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
+            log_sum = sum_exp.log()
+            out = m + log_sum
+
         if not keepdims:
             ndim = self.ndim
             norm_axis = axis + ndim if axis < 0 else axis
@@ -1037,7 +1076,30 @@ class Tensor:
         return self - lse
 
     def softmax(self, axis: int = -1) -> 'Tensor':
-        """Numerically stable Softmax: softmax(x) = exp(log_softmax(x))."""
+        """
+        Numerically stable Softmax: softmax(x) = exp(log_softmax(x)).
+        Guarantees 0.0 attention probability without NaN on all-masked rows.
+        """
+        m = self.max(axis=axis, keepdims=True).detach()
+        backend = self.backend
+        flat_m = backend.to_flat_list(m._data)
+        if any(math.isinf(v) and v < 0 for v in flat_m):
+            lse = self.logsumexp(axis=axis, keepdims=True)
+            lse_b = backend.mul(backend.ones(self.shape), lse._data)
+            flat_lse = backend.to_flat_list(lse_b)
+            flat_x = backend.to_flat_list(self._data)
+            res = [0.0 if (math.isinf(lv) and lv < 0) else math.exp(xv - lv)
+                   for xv, lv in zip(flat_x, flat_lse)]
+            out_data = backend.from_data(backend.reshape(res, self.shape), dtype="float32")
+            out = Tensor(out_data, dtype="float32", requires_grad=self.requires_grad, _prev=(self,), _op="softmax", backend=backend)
+            if out.requires_grad:
+                def _backward():
+                    if out.grad is not None:
+                        sum_gy = (out.grad * out).sum(axis=axis, keepdims=True)
+                        d_self = out * (out.grad - sum_gy)
+                        self._accumulate_grad_data(d_self._data)
+                _attach_grad_fn(out, (self,), _backward)
+            return out
         return self.log_softmax(axis=axis).exp()
 
     # =========================================================================
@@ -1052,6 +1114,7 @@ class Tensor:
     ) -> None:
         """
         Computes the gradient of current tensor w.r.t. graph leaves using iterative DFS.
+        Protects against cyclic computation graphs via 3-color cycle detection.
         Releases intermediate graph references and closures in-flight when retain_graph=False.
         """
         if not self.requires_grad and self._backward is None:
@@ -1072,22 +1135,27 @@ class Tensor:
         if self._grad_fn_state == "invalid":
             raise RuntimeError("Cannot backward through an invalid/poisoned computation graph.")
 
+        color: Dict[int, int] = {}  # 0: VISITING (Grey), 1: VISITED (Black)
         topo: List['Tensor'] = []
-        visited: Set[int] = set()
         stack: List[Tuple['Tensor', bool]] = [(self, False)]
 
         while stack:
             node, processed = stack.pop()
             node_id = id(node)
-            if node_id in visited:
-                continue
             if processed:
-                visited.add(node_id)
+                color[node_id] = 1
                 topo.append(node)
             else:
+                if color.get(node_id) == 0:
+                    raise RuntimeError("Cycle detected in computation graph during autograd traversal.")
+                if node_id in color:
+                    continue
+                color[node_id] = 0
                 stack.append((node, True))
                 for child in node._prev:
-                    if id(child) not in visited:
+                    if color.get(id(child)) == 0:
+                        raise RuntimeError("Cycle detected in computation graph during autograd traversal.")
+                    if id(child) not in color:
                         stack.append((child, False))
 
         # Reset intermediate non-leaf gradients for clean multi-backward accumulation

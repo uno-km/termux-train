@@ -2,6 +2,7 @@
 termux_train.nn.linear
 ======================
 Fully Connected Linear (Dense) Layer with learnable weight and bias parameters.
+Supports arbitrary N-D tensor inputs with right-aligned affine transformation.
 """
 
 import math
@@ -9,6 +10,7 @@ import random
 from typing import Optional
 from .module import Module
 from .parameter import Parameter
+from ..tensor import Tensor
 from ..backend import get_backend, BaseBackend
 
 class Linear(Module):
@@ -49,18 +51,14 @@ class Linear(Module):
         else:
             self.bias: Optional[Parameter] = None
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """
         Forward computation: y = x @ weight + bias.
-        Supported inputs:
-          1D: (in_features,) -> (out_features,)
-          2D: (batch_size, in_features) -> (batch_size, out_features)
-          3D: (batch_size, sequence_length, in_features) -> (batch_size, sequence_length, out_features)
+        Supports arbitrary N-D inputs with shape (..., in_features) -> (..., out_features).
         """
-        if x.ndim not in (1, 2, 3):
+        if x.ndim < 1:
             raise ValueError(
-                "Linear expects a 1D, 2D, or 3D input, "
-                f"but received shape {x.shape}"
+                f"Linear expects input with ndim >= 1, but received shape {x.shape}"
             )
         if x.shape[-1] != self.in_features:
             raise ValueError(
