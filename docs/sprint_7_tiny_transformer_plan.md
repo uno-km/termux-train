@@ -117,7 +117,9 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Hardening Commit**: `9a3ff76` (`Harden Dtype promotion, inplace mutation guards, IEEE 754 compliance, and atomic transactions`)
 - **Lifecycle & Setup Commit**: `55b916a` (`Add Big-Tech autograd lifecycle: no_grad, in-flight DAG release, selective saving, and NumPy setup`)
 - **Autograd Correctness Commit**: `747d26f` (`Harden Autograd correctness: 1D dot grad, monotonic version invalidation, tie subgradient, and thread-safe ContextVar`)
-- **Host Tests**: `547 passed, 6 warnings` (61 dtype, transformer math, hardening, lifecycle & correctness tests 100% PASS)
+- **Audit Polish Commit**: `ab0f910` (`Harden Autograd: conditional closure definitions, max tie spec alignment, and leaf/multithread test coverage`)
+- **Host Tests**: `552 passed, 6 warnings in 7.52s` (66 dtype, transformer math, hardening, lifecycle & correctness tests 100% PASS)
+- **Test Evidence**: `reports/junit_test_report.xml`
 - **Files**:
   - `docs/tiny_transformer_spec.md`
   - `termux_train/tensor.py`
@@ -134,5 +136,6 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
   - `tests/test_audit_hardening.py`
   - `tests/test_autograd_lifecycle.py`
   - `tests/test_autograd_correctness.py`
-- **Jira Status**: `검토 중 (Ready for Device Validation)`
+- **SCRUM-315 Ticket Stage**: `검토 중 (Ready for Device Validation)`
+- **Sprint 7 Overall Stage**: `진행 중 (Host In Progress, Device Validation Pending)`
 - **Android Termux Gate**: `PENDING`
