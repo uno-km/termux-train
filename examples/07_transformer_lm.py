@@ -140,9 +140,9 @@ def main():
     generated_text = tokenizer.decode(generated_ids)
     print(f"[*] Generated: '{generated_text}'\n")
 
-    print("=" * 70)
-    print("  ✅ [termux-train] Demo 05 Completed Successfully!")
-    print("=" * 70)
+    print("======================================================================")
+    print("  ✅ [termux-train] Demo 07 Completed Successfully!")
+    print("======================================================================")
 
 
 if __name__ == "__main__":

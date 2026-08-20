@@ -10,6 +10,12 @@ from .module import Module
 from .parameter import Parameter
 from ..tensor import Tensor, randn, _attach_grad_fn
 
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
+
 
 class Embedding(Module):
     """
@@ -74,22 +80,34 @@ class Embedding(Module):
         """
         backend = self.weight.backend
         input_t = self.weight._ensure_tensor_on_self_backend(input)
-        flat_indices = backend.to_flat_list(input_t._data)
-
         v_size = self.num_embeddings
         e_dim = self.embedding_dim
 
-        valid_int_indices = []
-        for idx_val in flat_indices:
-            idx = int(idx_val)
-            if not (0 <= idx < v_size):
-                raise IndexError(
-                    f"Index out of range in Embedding lookup: got {idx}, but num_embeddings is {v_size}"
-                )
-            valid_int_indices.append(idx)
+        # Vectorized bounds checking on NumPy
+        if HAS_NUMPY and isinstance(input_t._data, np.ndarray):
+            raw_arr = input_t._data
+            if raw_arr.size > 0:
+                min_v = int(np.min(raw_arr))
+                max_v = int(np.max(raw_arr))
+                if min_v < 0 or max_v >= v_size:
+                    bad_val = min_v if min_v < 0 else max_v
+                    raise IndexError(
+                        f"Index out of range in Embedding lookup: got {bad_val}, but num_embeddings is {v_size}"
+                    )
+            int_indices = raw_arr.flatten().tolist()
+        else:
+            flat_indices = backend.to_flat_list(input_t._data)
+            int_indices = []
+            for idx_val in flat_indices:
+                idx = int(idx_val)
+                if not (0 <= idx < v_size):
+                    raise IndexError(
+                        f"Index out of range in Embedding lookup: got {idx}, but num_embeddings is {v_size}"
+                    )
+                int_indices.append(idx)
 
         out_shape = input_t.shape + (e_dim,)
-        out_data = backend.gather_rows(self.weight._data, valid_int_indices, out_shape)
+        out_data = backend.gather_rows(self.weight._data, int_indices, out_shape)
         out = Tensor(
             out_data,
             dtype="float32",
@@ -108,15 +126,15 @@ class Embedding(Module):
                     d_w_zeros = backend.zeros((v_size, e_dim), dtype="float32")
                     d_w_data = backend.scatter_add_rows(
                         d_w_zeros,
-                        valid_int_indices,
+                        int_indices,
                         out.grad._data,
                         padding_idx=p_idx
                     )
                     w_weight._accumulate_grad_data(d_w_data)
 
             _attach_grad_fn(out, (self.weight,), _backward)
+
         return out
 
     def __repr__(self) -> str:
-        pad_str = f", padding_idx={self.padding_idx}" if self.padding_idx is not None else ""
-        return f"Embedding({self.num_embeddings}, {self.embedding_dim}{pad_str})"
+        return f"Embedding(num_embeddings={self.num_embeddings}, embedding_dim={self.embedding_dim}, padding_idx={self.padding_idx})"

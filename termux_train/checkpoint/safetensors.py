@@ -2,7 +2,7 @@
 termux_train.checkpoint.safetensors
 ===================================
 HuggingFace-Compatible Zero-Copy SafeTensors Binary Serialization Engine.
-Eliminates JSON text expansion, reduces file size by ~85%, and provides atomic save with temp-file rollback.
+Uses C-level direct byte stream (tobytes / frombuffer) on NumPy to eliminate O(N) Python list conversion.
 """
 
 import json
@@ -12,6 +12,12 @@ import struct
 from typing import Dict, Any, Optional, Tuple
 from ..tensor import Tensor
 from ..backend import get_backend, BaseBackend
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 DTYPE_TO_SAFETENSORS = {
@@ -26,10 +32,10 @@ SAFETENSORS_TO_DTYPE = {
     "BOOL": "bool",
 }
 
-DTYPE_ITEMSIZE = {
-    "float32": 4,
-    "int64": 8,
-    "bool": 1,
+DTYPE_TO_NP = {
+    "float32": "float32",
+    "int64": "int64",
+    "bool": "bool",
 }
 
 STRUCT_FORMAT = {
@@ -40,23 +46,45 @@ STRUCT_FORMAT = {
 
 
 def _tensor_to_raw_bytes(tensor: Tensor) -> bytes:
-    """Converts tensor data to contiguous raw little-endian binary bytes."""
+    """Converts tensor data to contiguous raw little-endian binary bytes with zero-copy NumPy fast path."""
+    dtype = tensor.dtype
+    if HAS_NUMPY and isinstance(tensor._data, np.ndarray):
+        np_dt = np.dtype(DTYPE_TO_NP.get(dtype, "float32")).newbyteorder("<")
+        return np.ascontiguousarray(tensor._data, dtype=np_dt).tobytes()
+
     backend = tensor.backend
     flat_data = backend.to_flat_list(tensor._data)
-    dtype = tensor.dtype
     fmt_char = STRUCT_FORMAT.get(dtype, "f")
-    fmt = f"<{len(flat_data)}{fmt_char}"
-    return struct.pack(fmt, *flat_data)
+
+    # Chunked packing to avoid CPython *args argument limits on large tensors
+    chunk_size = 32768
+    byte_chunks = []
+    for i in range(0, len(flat_data), chunk_size):
+        chunk = flat_data[i:i + chunk_size]
+        byte_chunks.append(struct.pack(f"<{len(chunk)}{fmt_char}", *chunk))
+    return b"".join(byte_chunks)
 
 
 def _raw_bytes_to_tensor_data(raw_bytes: bytes, shape: Tuple[int, ...], dtype: str, backend: BaseBackend) -> Any:
-    """Reconstructs native backend tensor data from contiguous raw little-endian bytes."""
+    """Reconstructs native backend tensor data from contiguous raw little-endian bytes with zero-copy NumPy."""
+    if HAS_NUMPY and getattr(backend, "name", "").lower() == "numpy":
+        np_dt = np.dtype(DTYPE_TO_NP.get(dtype, "float32")).newbyteorder("<")
+        arr = np.frombuffer(raw_bytes, dtype=np_dt).reshape(shape).copy()
+        return arr
+
     fmt_char = STRUCT_FORMAT.get(dtype, "f")
     num_elements = 1
     for d in shape:
         num_elements *= d
-    fmt = f"<{num_elements}{fmt_char}"
-    unpacked_list = list(struct.unpack(fmt, raw_bytes))
+
+    chunk_size = 32768
+    itemsize = 4 if dtype == "float32" else (8 if dtype == "int64" else 1)
+    unpacked_list = []
+    for i in range(0, num_elements, chunk_size):
+        c_len = min(chunk_size, num_elements - i)
+        c_bytes = raw_bytes[i * itemsize:(i + c_len) * itemsize]
+        unpacked_list.extend(struct.unpack(f"<{c_len}{fmt_char}", c_bytes))
+
     return backend.from_data(backend.reshape(unpacked_list, shape), dtype=dtype)
 
 

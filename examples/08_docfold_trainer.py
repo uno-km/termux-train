@@ -108,9 +108,9 @@ def main():
     decoded_output = tokenizer.decode(generated_ids)
     print(f"[*] Generated Structured Output:\n    '{decoded_output}'\n")
 
-    print("=" * 70)
-    print("  ✅ [termux-train] Demo 06 Completed Successfully!")
-    print("=" * 70)
+    print("======================================================================")
+    print("  ✅ [termux-train] Demo 08 Completed Successfully!")
+    print("======================================================================")
 
 
 if __name__ == "__main__":

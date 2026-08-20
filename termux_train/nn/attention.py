@@ -1,14 +1,15 @@
 """
 termux_train.nn.attention
 =========================
-Multi-Head Attention Layer with Causal Mask Caching, Cross-Attention Support,
-Joint Causal+Padding Masking, Incremental KV Caching, and N-D Batch Generalization.
+Multi-Head Attention Layer with Rotary Position Embedding (RoPE),
+Universal Causal Trapezoid Masking, Joint Padding Masking, and Incremental KV Caching.
 """
 
 import math
 from typing import Optional, Tuple, Union
 from .module import Module
 from .linear import Linear
+from .rope import RotaryEmbedding
 from ..tensor import Tensor
 
 
@@ -35,7 +36,7 @@ def _concat_head_tensors(t1: Tensor, t2: Tensor, backend) -> Tensor:
 class MultiHeadAttention(Module):
     """
     Multi-Head Attention with scaled dot-product attention, zero-allocation causal mask caching,
-    joint causal & padding masking, and incremental KV caching for fast inference.
+    universal causal trapezoid masking, native RoPE integration, and incremental KV caching.
     """
 
     def __init__(
@@ -43,7 +44,8 @@ class MultiHeadAttention(Module):
         d_model: int,
         num_heads: int,
         bias: bool = True,
-        max_seq_len: int = 512
+        max_seq_len: int = 512,
+        rotary_emb: Optional[RotaryEmbedding] = None
     ):
         super().__init__()
         if not isinstance(d_model, int) or d_model <= 0:
@@ -57,6 +59,7 @@ class MultiHeadAttention(Module):
         self.num_heads = num_heads
         self.d_k = d_model // num_heads
         self.max_seq_len = max_seq_len
+        self.rotary_emb = rotary_emb
 
         self.q_proj = Linear(d_model, d_model, bias=bias)
         self.k_proj = Linear(d_model, d_model, bias=bias)
@@ -65,31 +68,41 @@ class MultiHeadAttention(Module):
 
         self._cached_causal_mask: Optional[Tensor] = None
 
-    def _get_causal_mask(self, seq_len: int, backend) -> Tensor:
+    def _get_causal_mask(self, S_q: int, S_k: int, backend) -> Tensor:
         """
-        Retrieves or allocates cached causal attention mask to eliminate runtime heap churn.
+        Retrieves or allocates cached causal attention mask (S_q, S_k).
+        Universal trapezoid rule: query i can attend to key j if j <= i + (S_k - S_q).
         """
-        if self._cached_causal_mask is None or self._cached_causal_mask.shape[0] < seq_len:
-            alloc_len = max(seq_len, self.max_seq_len)
-            mask_data = []
-            for i in range(alloc_len):
-                row = [0.0 if j <= i else -float('inf') for j in range(alloc_len)]
-                mask_data.append(row)
-            m_data = backend.from_data(mask_data, dtype="float32")
-            self._cached_causal_mask = Tensor(m_data, dtype="float32", requires_grad=False, backend=backend)
+        offset = S_k - S_q
+        if S_q == S_k:
+            if self._cached_causal_mask is None or self._cached_causal_mask.shape[0] < S_q:
+                alloc_len = max(S_q, self.max_seq_len)
+                mask_data = [
+                    [0.0 if j <= i else -float('inf') for j in range(alloc_len)]
+                    for i in range(alloc_len)
+                ]
+                m_data = backend.from_data(mask_data, dtype="float32")
+                self._cached_causal_mask = Tensor(m_data, dtype="float32", requires_grad=False, backend=backend)
 
-        if self._cached_causal_mask.shape == (seq_len, seq_len):
-            return self._cached_causal_mask
+            if self._cached_causal_mask.shape == (S_q, S_q):
+                return self._cached_causal_mask
 
-        # Sub-slice mask (seq_len, seq_len)
-        flat_cached = backend.to_flat_list(self._cached_causal_mask._data)
-        cached_dim = self._cached_causal_mask.shape[0]
-        sub_flat = []
-        for i in range(seq_len):
-            start = i * cached_dim
-            sub_flat.extend(flat_cached[start:start + seq_len])
-        sub_data = backend.from_data(backend.reshape(sub_flat, (seq_len, seq_len)), dtype="float32")
-        return Tensor(sub_data, dtype="float32", requires_grad=False, backend=backend)
+            flat_cached = backend.to_flat_list(self._cached_causal_mask._data)
+            cached_dim = self._cached_causal_mask.shape[0]
+            sub_flat = []
+            for i in range(S_q):
+                start = i * cached_dim
+                sub_flat.extend(flat_cached[start:start + S_q])
+            sub_data = backend.from_data(backend.reshape(sub_flat, (S_q, S_q)), dtype="float32")
+            return Tensor(sub_data, dtype="float32", requires_grad=False, backend=backend)
+
+        # Trapezoidal causal mask for arbitrary (S_q, S_k)
+        mask_data = [
+            [0.0 if j <= (i + offset) else -float('inf') for j in range(S_k)]
+            for i in range(S_q)
+        ]
+        m_data = backend.from_data(mask_data, dtype="float32")
+        return Tensor(m_data, dtype="float32", requires_grad=False, backend=backend)
 
     def forward(
         self,
@@ -99,17 +112,11 @@ class MultiHeadAttention(Module):
         mask: Optional[Tensor] = None,
         causal: bool = False,
         past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        position_offset: int = 0
     ) -> Union[Tensor, Tuple[Tensor, Tuple[Tensor, Tensor]]]:
         """
-        Forward pass of Multi-Head Attention:
-          query: shape (*B, S_q, d_model) or (S_q, d_model)
-          key: shape (*B, S_k, d_model) (defaults to query for self-attention)
-          value: shape (*B, S_k, d_model) (defaults to key)
-          mask: optional custom padding or attention mask
-          causal: whether to apply lower-triangular causal attention mask
-          past_key_value: optional cached (K, V) head tensors from previous decoding steps
-          use_cache: if True, returns (output, (present_K, present_V))
+        Forward pass of Multi-Head Attention.
         """
         if key is None:
             key = query
@@ -154,7 +161,12 @@ class MultiHeadAttention(Module):
         proj_k = proj_k.reshape(B, S_k, H, d_k).transpose(0, 2, 1, 3)
         proj_v = proj_v.reshape(B, S_k, H, d_k).transpose(0, 2, 1, 3)
 
-        # Incremental KV Cache Concatenation
+        # 3. Apply RoPE if configured
+        if self.rotary_emb is not None:
+            proj_q = self.rotary_emb(proj_q, position_offset=position_offset)
+            proj_k = self.rotary_emb(proj_k, position_offset=position_offset)
+
+        # 4. Incremental KV Cache Concatenation
         if past_key_value is not None:
             past_k, past_v = past_key_value
             proj_k = _concat_head_tensors(past_k, proj_k, backend=q.backend)
@@ -163,30 +175,30 @@ class MultiHeadAttention(Module):
         present_key_value = (proj_k, proj_v) if use_cache else None
         current_s_k = proj_k.shape[2]
 
-        # 3. Scaled Dot-Product Attention: Q @ K^T / sqrt(d_k)
-        k_t = proj_k.transpose(0, 1, 3, 2)  # (B, H, d_k, S_k_total)
+        # 5. Scaled Dot-Product Attention: Q @ K^T / sqrt(d_k)
+        k_t = proj_k.transpose(0, 1, 3, 2)  # (B, H, d_k, current_s_k)
         scale = 1.0 / math.sqrt(d_k)
-        scores = (proj_q @ k_t) * scale  # (B, H, S_q, S_k_total)
+        scores = (proj_q @ k_t) * scale  # (B, H, S_q, current_s_k)
 
-        # 4. Joint Causal + Padding Mask Application
-        if causal and S_q == current_s_k:
-            causal_m = self._get_causal_mask(S_q, backend=q.backend)
+        # 6. Universal Causal Trapezoid + Padding Mask Application
+        if causal:
+            causal_m = self._get_causal_mask(S_q, current_s_k, backend=q.backend)
             scores = scores + causal_m
 
         if mask is not None:
             mask_t = q._ensure_tensor_on_self_backend(mask)
             scores = scores + mask_t
 
-        # 5. Softmax attention probabilities
+        # 7. Softmax attention probabilities
         attn_weights = scores.softmax(axis=-1)
 
-        # 6. Compute Context: attn_weights @ V -> (B, H, S_q, d_k)
+        # 8. Compute Context: attn_weights @ V -> (B, H, S_q, d_k)
         context = attn_weights @ proj_v
 
-        # 7. Concatenate heads: (B, H, S_q, d_k) -> (B, S_q, H, d_k) -> (B, S_q, D)
+        # 9. Concatenate heads: (B, H, S_q, d_k) -> (B, S_q, H, d_k) -> (B, S_q, D)
         context = context.transpose(0, 2, 1, 3).reshape(B, S_q, self.d_model)
 
-        # 8. Output projection
+        # 10. Output projection
         out = self.out_proj(context)
 
         if orig_ndim == 2:
@@ -201,4 +213,4 @@ class MultiHeadAttention(Module):
         return final_out
 
     def __repr__(self) -> str:
-        return f"MultiHeadAttention(d_model={self.d_model}, num_heads={self.num_heads})"
+        return f"MultiHeadAttention(d_model={self.d_model}, num_heads={self.num_heads}, rotary={self.rotary_emb is not None})"

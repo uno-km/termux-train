@@ -2,6 +2,7 @@
 termux_train.nn.rope
 ====================
 Rotary Position Embedding (RoPE) for Context-Extrapolating Transformers.
+Vectorized C-level implementation for NumPy with Pure Python fallback.
 Standardized on Meta LLaMA, Mistral, Gemma, and RoFormer architectures.
 Requires 0 learnable parameters (O(0) parameter overhead).
 """
@@ -10,6 +11,12 @@ import math
 from typing import Tuple, Optional
 from .module import Module
 from ..tensor import Tensor, _attach_grad_fn
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 
 def _rotate_half(x_flat: list, head_dim: int) -> list:
@@ -60,7 +67,6 @@ class RotaryEmbedding(Module):
                 angle = float(pos) * freq
                 c = math.cos(angle)
                 s = math.sin(angle)
-                # Duplicate for both halves
                 row_cos.extend([c, c])
                 row_sin.extend([s, s])
             cos_table.append(row_cos)
@@ -68,6 +74,13 @@ class RotaryEmbedding(Module):
 
         self._cos_table = cos_table
         self._sin_table = sin_table
+
+        if HAS_NUMPY:
+            self._np_cos = np.array(cos_table, dtype=np.float32)
+            self._np_sin = np.array(sin_table, dtype=np.float32)
+        else:
+            self._np_cos = None
+            self._np_sin = None
 
     def forward(
         self,
@@ -91,6 +104,33 @@ class RotaryEmbedding(Module):
                 f"exceeds RoPE max_seq_len {self.max_seq_len}"
             )
 
+        # NumPy Vectorized Fast Path
+        if HAS_NUMPY and isinstance(x._data, np.ndarray) and getattr(backend, "name", "").lower() == "numpy":
+            cos = self._np_cos[position_offset:position_offset + seq_len]  # (S, head_dim)
+            sin = self._np_sin[position_offset:position_offset + seq_len]  # (S, head_dim)
+
+            # Broadcast cos and sin to x shape
+            while cos.ndim < x.ndim:
+                cos = np.expand_dims(cos, axis=0)
+                sin = np.expand_dims(sin, axis=0)
+
+            half = head_dim // 2
+            x_data = x._data
+            rot_x = np.concatenate([-x_data[..., half:], x_data[..., :half]], axis=-1)
+            out_data = x_data * cos + rot_x * sin
+            out = Tensor(out_data, dtype="float32", requires_grad=x.requires_grad, _prev=(x,), _op="rope", backend=backend)
+
+            if out.requires_grad:
+                def _backward_np():
+                    if out.grad is not None and x.requires_grad:
+                        g_data = out.grad._data
+                        rot_g = np.concatenate([-g_data[..., half:], g_data[..., :half]], axis=-1)
+                        dx_data = g_data * cos - rot_g * sin
+                        x._accumulate_grad_data(dx_data)
+                _attach_grad_fn(out, (x,), _backward_np)
+            return out
+
+        # Pure Python Fallback
         flat_x = backend.to_flat_list(x._data)
         rot_x = _rotate_half(flat_x, head_dim)
 
@@ -123,7 +163,6 @@ class RotaryEmbedding(Module):
         if out.requires_grad:
             def _backward():
                 if out.grad is not None and x.requires_grad:
-                    # RoPE backward is the inverse rotation (conjugate rotation: cos, -sin)
                     g_flat = backend.to_flat_list(out.grad._data)
                     rot_g = _rotate_half(g_flat, head_dim)
                     dx_flat = []
@@ -139,7 +178,6 @@ class RotaryEmbedding(Module):
                             rot_g_val = rot_g[g_start + d]
                             c = cos_r[d]
                             s = sin_r[d]
-                            # Transpose of rotation matrix: x = g*cos - rot_g*sin
                             dx_flat.append(g_val * c - rot_g_val * s)
 
                     dx_data = backend.from_data(backend.reshape(dx_flat, shape), dtype="float32")

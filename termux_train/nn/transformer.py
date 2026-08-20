@@ -2,7 +2,7 @@
 termux_train.nn.transformer
 ===========================
 Tiny Transformer Architecture and Autoregressive Language Model Primitives for Termux.
-Includes Pre-LN Residual Blocks, Weight-Tying, Pre-Allocated Position Buffers,
+Includes Pre-LN Residual Blocks, Native RoPE (Rotary Position Embedding), Weight-Tying,
 Incremental KV-Caching, Early-Stopping (<EOS>), and Top-K/Top-P (Nucleus) Sampler.
 """
 
@@ -16,6 +16,7 @@ from .embedding import Embedding
 from .layernorm import LayerNorm
 from .activations import ReLU
 from .attention import MultiHeadAttention
+from .rope import RotaryEmbedding
 from .sequential import Sequential
 from .loss import cross_entropy_loss
 from ..tensor import Tensor, zeros, no_grad
@@ -31,6 +32,8 @@ def _sample_next_token(
     Samples next token with temperature scaling, Top-k truncation, and Top-p (nucleus) filtering.
     """
     v_size = len(logits_flat)
+    if v_size == 0:
+        raise ValueError("Cannot sample next token from empty logits")
     if temperature < 1e-4 or (top_k == 1):
         return int(max(range(v_size), key=lambda i: logits_flat[i]))
 
@@ -97,7 +100,7 @@ class FeedForward(Module):
 class TransformerBlock(Module):
     """
     Pre-LayerNorm Transformer Block:
-      x = x + MHA(LN1(x), causal=causal, past_key_value=...)
+      x = x + MHA(LN1(x), causal=causal, past_key_value=..., position_offset=...)
       x = x + FFN(LN2(x))
     """
 
@@ -107,11 +110,12 @@ class TransformerBlock(Module):
         num_heads: int,
         d_ff: int,
         eps: float = 1e-5,
-        max_seq_len: int = 512
+        max_seq_len: int = 512,
+        rotary_emb: Optional[RotaryEmbedding] = None
     ):
         super().__init__()
         self.ln1 = LayerNorm(d_model, eps=eps)
-        self.attn = MultiHeadAttention(d_model, num_heads, max_seq_len=max_seq_len)
+        self.attn = MultiHeadAttention(d_model, num_heads, max_seq_len=max_seq_len, rotary_emb=rotary_emb)
         self.ln2 = LayerNorm(d_model, eps=eps)
         self.ffn = FeedForward(d_model, d_ff)
 
@@ -121,7 +125,8 @@ class TransformerBlock(Module):
         mask: Optional[Tensor] = None,
         causal: bool = True,
         past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        position_offset: int = 0
     ) -> Union[Tensor, Tuple[Tensor, Tuple[Tensor, Tensor]]]:
         # Pre-LN Self-Attention with Residual & Cache
         norm_x1 = self.ln1(x)
@@ -131,7 +136,8 @@ class TransformerBlock(Module):
                 mask=mask,
                 causal=causal,
                 past_key_value=past_key_value,
-                use_cache=True
+                use_cache=True,
+                position_offset=position_offset
             )
         else:
             attn_out = self.attn(
@@ -139,7 +145,8 @@ class TransformerBlock(Module):
                 mask=mask,
                 causal=causal,
                 past_key_value=past_key_value,
-                use_cache=False
+                use_cache=False,
+                position_offset=position_offset
             )
             present_kv = None
 
@@ -161,8 +168,8 @@ class TransformerBlock(Module):
 class TinyTransformerLM(Module):
     """
     Full Decoder-Only Autoregressive Language Model:
-      - Token Embedding + Learned Positional Embedding
-      - Stack of N Pre-LN Transformer Blocks (with KV Cache support)
+      - Token Embedding + (Rotary Position Embedding RoPE OR Learned Positional Embedding)
+      - Stack of N Pre-LN Transformer Blocks (with Native RoPE & KV Cache support)
       - Final LayerNorm + LM Head Projection (with weight tying option)
       - Fast Autoregressive generate() with KV Cache, Early Stopping, and Top-K/Top-P
     """
@@ -176,7 +183,8 @@ class TinyTransformerLM(Module):
         num_layers: int,
         max_seq_len: int = 512,
         padding_idx: Optional[int] = None,
-        tie_weights: bool = False
+        tie_weights: bool = False,
+        pos_type: str = "rope"
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -184,12 +192,28 @@ class TinyTransformerLM(Module):
         self.max_seq_len = max_seq_len
         self.num_layers = num_layers
         self.tie_weights = tie_weights
+        self.pos_type = pos_type.lower()
+
+        if self.pos_type not in ("rope", "learned"):
+            raise ValueError(f"pos_type must be 'rope' or 'learned', got '{pos_type}'")
 
         self.tok_emb = Embedding(vocab_size, d_model, padding_idx=padding_idx)
-        self.pos_emb = Embedding(max_seq_len, d_model)
+
+        head_dim = d_model // num_heads
+        if self.pos_type == "rope":
+            self.rotary_emb = RotaryEmbedding(dim=head_dim, max_seq_len=max_seq_len)
+            self.pos_emb = None
+            self._cached_pos_idx = None
+        else:
+            self.rotary_emb = None
+            self.pos_emb = Embedding(max_seq_len, d_model)
+            backend = self.tok_emb.weight.backend
+            pos_list = list(range(max_seq_len))
+            pos_data = backend.from_data(pos_list, dtype="int64")
+            self._cached_pos_idx = Tensor(pos_data, dtype="int64", requires_grad=False, backend=backend)
 
         self.blocks = Sequential(*[
-            TransformerBlock(d_model, num_heads, d_ff, max_seq_len=max_seq_len)
+            TransformerBlock(d_model, num_heads, d_ff, max_seq_len=max_seq_len, rotary_emb=self.rotary_emb)
             for _ in range(num_layers)
         ])
 
@@ -199,11 +223,6 @@ class TinyTransformerLM(Module):
             self.head = None
         else:
             self.head = Linear(d_model, vocab_size, bias=False)
-
-        backend = self.tok_emb.weight.backend
-        pos_list = list(range(max_seq_len))
-        pos_data = backend.from_data(pos_list, dtype="int64")
-        self._cached_pos_idx = Tensor(pos_data, dtype="int64", requires_grad=False, backend=backend)
 
     def forward(
         self,
@@ -224,29 +243,45 @@ class TinyTransformerLM(Module):
                 targets = targets.reshape(1, targets.shape[0])
 
         B, S = idx.shape
+        if S == 0:
+            raise ValueError("Input sequence length cannot be 0")
         if position_offset + S > self.max_seq_len:
             raise ValueError(f"Sequence position {position_offset + S} exceeds max_seq_len {self.max_seq_len}")
 
         backend = idx.backend
+        tok_embeddings = self.tok_emb(idx)  # (B, S, d_model)
 
-        # Position embeddings with offset
-        pos_flat = backend.to_flat_list(self._cached_pos_idx._data)[position_offset:position_offset + S]
-        pos_data = backend.from_data(pos_flat, dtype="int64")
-        pos_idx = Tensor(pos_data, dtype="int64", requires_grad=False, backend=backend)
-
-        tok_embeddings = self.tok_emb(idx)        # (B, S, d_model)
-        pos_embeddings = self.pos_emb(pos_idx)    # (S, d_model)
-
-        x = tok_embeddings + pos_embeddings
+        if self.pos_type == "learned":
+            pos_flat = backend.to_flat_list(self._cached_pos_idx._data)[position_offset:position_offset + S]
+            pos_data = backend.from_data(pos_flat, dtype="int64")
+            pos_idx = Tensor(pos_data, dtype="int64", requires_grad=False, backend=backend)
+            pos_embeddings = self.pos_emb(pos_idx)
+            x = tok_embeddings + pos_embeddings
+        else:
+            x = tok_embeddings  # RoPE applies inside attention heads directly
 
         present_kvs = [] if use_cache else None
         for i, block in enumerate(self.blocks):
             past_kv = past_key_values[i] if past_key_values is not None else None
             if use_cache:
-                x, present_kv = block(x, mask=mask, causal=True, past_key_value=past_kv, use_cache=True)
+                x, present_kv = block(
+                    x,
+                    mask=mask,
+                    causal=True,
+                    past_key_value=past_kv,
+                    use_cache=True,
+                    position_offset=position_offset
+                )
                 present_kvs.append(present_kv)
             else:
-                x = block(x, mask=mask, causal=True, past_key_value=past_kv, use_cache=False)
+                x = block(
+                    x,
+                    mask=mask,
+                    causal=True,
+                    past_key_value=past_kv,
+                    use_cache=False,
+                    position_offset=position_offset
+                )
 
         x = self.ln_f(x)
         if self.tie_weights:
@@ -280,8 +315,11 @@ class TinyTransformerLM(Module):
         use_cache: bool = True
     ) -> List[int]:
         """
-        Fast autoregressive next-token generation with KV Cache, Early Stopping, and Top-K/Top-P sampling.
+        Fast autoregressive next-token generation with RoPE, KV Cache, Early Stopping, and Top-K/Top-P sampling.
         """
+        if not prompt_tokens:
+            raise ValueError("prompt_tokens cannot be empty for generation")
+
         tokens = list(prompt_tokens)
         backend = self.tok_emb.weight.backend
         v_size = self.vocab_size
@@ -339,5 +377,6 @@ class TinyTransformerLM(Module):
     def __repr__(self) -> str:
         return (
             f"TinyTransformerLM(vocab_size={self.vocab_size}, d_model={self.d_model}, "
-            f"num_layers={self.num_layers}, max_seq_len={self.max_seq_len}, tie_weights={self.tie_weights})"
+            f"num_layers={self.num_layers}, max_seq_len={self.max_seq_len}, "
+            f"pos_type='{self.pos_type}', tie_weights={self.tie_weights})"
         )
