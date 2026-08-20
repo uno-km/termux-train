@@ -1,7 +1,7 @@
 """
 termux_train/tokenization/base.py
 =================================
-Abstract Base Tokenizer Interface and Special Token Contracts.
+Abstract Base Tokenizer Interface, Strict Schema Validation, and Special Token Contracts.
 
 Defines deterministic vocabulary management and encode/decode lifecycle.
 Pure Python only (zero external / C++ / Rust / Tensor / NumPy dependencies).
@@ -22,6 +22,8 @@ BOS_ID = 2
 EOS_ID = 3
 
 SPECIAL_TOKENS = [PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN]
+FORMAT_NAME = "termux-train-tokenizer"
+SCHEMA_VERSION = "1.0"
 
 
 class BaseTokenizer(ABC):
@@ -33,6 +35,7 @@ class BaseTokenizer(ABC):
       - Fixed special token mapping:
           <PAD> -> 0, <UNK> -> 1, <BOS> -> 2, <EOS> -> 3.
       - Pure-Python execution (no C++ extensions or third-party tokenizers).
+      - Strict serialization schema validation (format, version, type, contiguity, and invariants).
     """
 
     PAD_TOKEN = PAD_TOKEN
@@ -45,6 +48,9 @@ class BaseTokenizer(ABC):
     BOS_ID = BOS_ID
     EOS_ID = EOS_ID
     SPECIAL_TOKENS = SPECIAL_TOKENS
+
+    FORMAT_NAME = FORMAT_NAME
+    SCHEMA_VERSION = SCHEMA_VERSION
 
     def __init__(self) -> None:
         self._token_to_id: Dict[str, int] = {}
@@ -100,6 +106,15 @@ class BaseTokenizer(ABC):
     def get_vocab(self) -> Dict[str, int]:
         """Returns a copy of the vocabulary dictionary mapping tokens to IDs."""
         return copy.deepcopy(self._token_to_id)
+
+    def get_config(self) -> Dict[str, Any]:
+        """Returns subclass-specific configuration parameters for serialization."""
+        return {}
+
+    def _validate_config(self, config: Dict[str, Any]) -> None:
+        """Hook for subclass-specific configuration validation during deserialization."""
+        if not isinstance(config, dict):
+            raise TypeError(f"config must be a dict, got {type(config).__name__}")
 
     @abstractmethod
     def build_vocab(
@@ -170,14 +185,14 @@ class BaseTokenizer(ABC):
     def decode(
         self,
         tokens: Sequence[int],
-        skip_special_tokens: bool = False,
+        skip_special_tokens: bool = True,
     ) -> str:
         """
         Decodes a sequence of integer token IDs back into a string.
 
         Args:
             tokens: Sequence of integer token IDs.
-            skip_special_tokens: If True, filters out <PAD>, <UNK>, <BOS>, <EOS>.
+            skip_special_tokens: If True (default), filters out <PAD>, <UNK>, <BOS>, <EOS>.
 
         Returns:
             Reconstructed string.
@@ -206,23 +221,99 @@ class BaseTokenizer(ABC):
         return self._detokenize(token_strings)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Serializes the tokenizer vocabulary and metadata to a JSON-compatible dictionary."""
+        """
+        Serializes the tokenizer vocabulary and metadata to a strict JSON-compatible container.
+        """
         return {
-            "type": self.__class__.__name__,
+            "format": self.FORMAT_NAME,
+            "version": self.SCHEMA_VERSION,
+            "tokenizer_type": self.__class__.__name__,
             "vocab": self.get_vocab(),
             "vocab_built": self._vocab_built,
+            "config": self.get_config(),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "BaseTokenizer":
-        """Reconstructs a tokenizer instance from a serialized vocabulary dictionary."""
+        """
+        Atomically deserializes and strictly validates a tokenizer container.
+
+        Enforces:
+          - Exact container key set.
+          - Exact format name and schema version.
+          - Strict tokenizer_type class matching.
+          - Strict vocab type, string keys, integer non-bool IDs >= 0.
+          - Strict ID uniqueness and contiguity from 0 to vocab_size - 1.
+          - Exact special token ID mappings (<PAD>:0, <UNK>:1, <BOS>:2, <EOS>:3).
+          - Subclass-specific configuration validation.
+        """
         if not isinstance(data, dict):
             raise TypeError(f"data must be a dict, got {type(data).__name__}")
-        if "vocab" not in data or not isinstance(data["vocab"], dict):
-            raise ValueError("Serialized data missing valid 'vocab' dictionary")
+
+        expected_keys = {"format", "version", "tokenizer_type", "vocab", "vocab_built", "config"}
+        actual_keys = set(data.keys())
+        if actual_keys != expected_keys:
+            raise ValueError(f"Invalid tokenizer container keys: expected {sorted(expected_keys)}, got {sorted(actual_keys)}")
+
+        if data["format"] != cls.FORMAT_NAME:
+            raise ValueError(f"Unsupported tokenizer format: {data['format']}, expected {cls.FORMAT_NAME}")
+
+        if data["version"] != cls.SCHEMA_VERSION:
+            raise ValueError(f"Unsupported tokenizer schema version: {data['version']}, expected {cls.SCHEMA_VERSION}")
+
+        if data["tokenizer_type"] != cls.__name__:
+            raise ValueError(
+                f"Tokenizer type mismatch: container contains '{data['tokenizer_type']}', but target class is '{cls.__name__}'"
+            )
+
+        vocab = data["vocab"]
+        if not isinstance(vocab, dict):
+            raise TypeError(f"vocab must be a dict, got {type(vocab).__name__}")
+
+        vocab_built = data["vocab_built"]
+        if not isinstance(vocab_built, bool):
+            raise TypeError(f"vocab_built must be a bool, got {type(vocab_built).__name__}")
+
+        config = data["config"]
+        if not isinstance(config, dict):
+            raise TypeError(f"config must be a dict, got {type(config).__name__}")
+
+        # Validate vocabulary keys and integer IDs
+        seen_ids = set()
+        for token_key, token_val in vocab.items():
+            if not isinstance(token_key, str):
+                raise TypeError(f"All vocabulary token keys must be str, got {type(token_key).__name__}")
+            if isinstance(token_val, bool) or not isinstance(token_val, int):
+                raise TypeError(f"Vocabulary ID for token '{token_key}' must be an int, got {type(token_val).__name__}")
+            if token_val < 0:
+                raise ValueError(f"Vocabulary ID for token '{token_key}' must be >= 0, got {token_val}")
+            if token_val in seen_ids:
+                raise ValueError(f"Duplicate vocabulary ID {token_val} found in serialized vocab")
+            seen_ids.add(token_val)
+
+        # Validate contiguity: IDs must be 0..len(vocab)-1
+        num_tokens = len(vocab)
+        if seen_ids != set(range(num_tokens)):
+            raise ValueError(
+                f"Vocabulary IDs must be strictly contiguous from 0 to {num_tokens - 1}, but found missing or out-of-range IDs"
+            )
+
+        # Validate fixed special token IDs
+        if vocab.get(PAD_TOKEN) != PAD_ID:
+            raise ValueError(f"Special token '{PAD_TOKEN}' must have ID {PAD_ID}, got {vocab.get(PAD_TOKEN)}")
+        if vocab.get(UNK_TOKEN) != UNK_ID:
+            raise ValueError(f"Special token '{UNK_TOKEN}' must have ID {UNK_ID}, got {vocab.get(UNK_TOKEN)}")
+        if vocab.get(BOS_TOKEN) != BOS_ID:
+            raise ValueError(f"Special token '{BOS_TOKEN}' must have ID {BOS_ID}, got {vocab.get(BOS_TOKEN)}")
+        if vocab.get(EOS_TOKEN) != EOS_ID:
+            raise ValueError(f"Special token '{EOS_TOKEN}' must have ID {EOS_ID}, got {vocab.get(EOS_TOKEN)}")
 
         instance = cls()
-        instance._token_to_id = copy.deepcopy(data["vocab"])
-        instance._id_to_token = {int(v): k for k, v in instance._token_to_id.items()}
-        instance._vocab_built = data.get("vocab_built", True)
+        instance._validate_config(config)
+
+        # Atomic assignment after all validations pass
+        instance._token_to_id = copy.deepcopy(vocab)
+        instance._id_to_token = {v: k for k, v in instance._token_to_id.items()}
+        instance._vocab_built = vocab_built
+
         return instance

@@ -7,7 +7,7 @@ Operates directly on UTF-8 raw byte values (0~255) with fixed vocabulary indexin
 Guarantees exact round-trip representation for all valid UTF-8 strings.
 """
 
-from typing import List, Sequence, Optional, Dict
+from typing import List, Sequence, Optional, Dict, Any
 from .base import BaseTokenizer
 
 
@@ -39,8 +39,28 @@ class ByteTokenizer(BaseTokenizer):
     ) -> "ByteTokenizer":
         """
         Populates the full 256-byte vocabulary.
-        Note: texts parameter is accepted for API consistency, but byte vocabulary is fixed and complete.
+
+        Args:
+            texts: Optional sequence of strings (validated for type consistency if provided).
+            min_freq: Must be 1 (ByteTokenizer vocabulary is fixed).
+            max_vocab_size: Must be None or 260 (ByteTokenizer vocabulary size is fixed).
         """
+        if texts is not None:
+            if not isinstance(texts, (list, tuple)):
+                raise TypeError(f"texts must be a list or tuple of strings or None, got {type(texts).__name__}")
+            for t in texts:
+                if not isinstance(t, str):
+                    raise TypeError(f"All elements in texts must be strings, got {type(t).__name__}")
+
+        if isinstance(min_freq, bool) or not isinstance(min_freq, int) or min_freq != 1:
+            raise ValueError(f"ByteTokenizer uses a fixed 256-byte vocabulary; min_freq must be 1, got {min_freq}")
+
+        if max_vocab_size is not None:
+            if isinstance(max_vocab_size, bool) or not isinstance(max_vocab_size, int) or max_vocab_size != 260:
+                raise ValueError(
+                    f"ByteTokenizer uses a fixed 260-token vocabulary; max_vocab_size must be None or 260, got {max_vocab_size}"
+                )
+
         self._init_special_tokens()
 
         for b in range(self.NUM_BYTES):
@@ -58,9 +78,8 @@ class ByteTokenizer(BaseTokenizer):
         return [f"<0x{b:02X}>" for b in raw_bytes]
 
     def _detokenize(self, token_strings: List[str]) -> str:
-        """Detokenization handled directly in decode() via bytearray for UTF-8 preservation."""
-        # Unused directly in ByteTokenizer since decode() processes raw bytes directly.
-        pass
+        """Detokenization handled directly in decode() via byte spans for UTF-8 preservation."""
+        return "".join(token_strings)
 
     def encode(
         self,
@@ -91,7 +110,7 @@ class ByteTokenizer(BaseTokenizer):
     def decode(
         self,
         tokens: Sequence[int],
-        skip_special_tokens: bool = False,
+        skip_special_tokens: bool = True,
         errors: str = "strict",
     ) -> str:
         """
@@ -99,7 +118,9 @@ class ByteTokenizer(BaseTokenizer):
 
         Args:
             tokens: Sequence of integer token IDs.
-            skip_special_tokens: If True, ignores special tokens (0..3).
+            skip_special_tokens: If True (default), filters out special tokens (<PAD>, <UNK>, <BOS>, <EOS>).
+                                 If False, inserts special token string representations (<BOS>, <EOS>, etc.)
+                                 in place while decoding intermediate byte sequences to UTF-8.
             errors: UTF-8 decode error handling policy ("strict", "replace", "ignore").
 
         Returns:
@@ -112,8 +133,17 @@ class ByteTokenizer(BaseTokenizer):
         if not isinstance(errors, str):
             raise TypeError(f"errors must be a str, got {type(errors).__name__}")
 
-        byte_vals = bytearray()
+        output_parts: List[str] = []
+        current_byte_span = bytearray()
         special_ids = {self.PAD_ID, self.UNK_ID, self.BOS_ID, self.EOS_ID}
+
+        def flush_bytes():
+            if current_byte_span:
+                try:
+                    output_parts.append(current_byte_span.decode("utf-8", errors=errors))
+                except UnicodeDecodeError as e:
+                    raise UnicodeDecodeError(e.encoding, e.object, e.start, e.end, f"Failed to decode byte sequence: {e.reason}") from e
+                current_byte_span.clear()
 
         for idx, t in enumerate(tokens):
             if isinstance(t, bool) or not isinstance(t, int):
@@ -122,14 +152,25 @@ class ByteTokenizer(BaseTokenizer):
                 raise ValueError(f"Token ID {t} at index {idx} is out of bounds for vocab of size {self.vocab_size}")
 
             if t in special_ids:
-                if skip_special_tokens:
-                    continue
-                # Special tokens do not correspond to UTF-8 bytes
-                continue
+                flush_bytes()
+                if not skip_special_tokens:
+                    output_parts.append(self._id_to_token[t])
+            else:
+                current_byte_span.append(t - self.BYTE_OFFSET)
 
-            byte_vals.append(t - self.BYTE_OFFSET)
+        flush_bytes()
+        return "".join(output_parts)
 
-        try:
-            return byte_vals.decode("utf-8", errors=errors)
-        except UnicodeDecodeError as e:
-            raise UnicodeDecodeError(e.encoding, e.object, e.start, e.end, f"Failed to decode byte sequence: {e.reason}") from e
+    def get_config(self) -> Dict[str, Any]:
+        return {
+            "byte_offset": self.BYTE_OFFSET,
+            "num_bytes": self.NUM_BYTES,
+        }
+
+    def _validate_config(self, config: Dict[str, Any]) -> None:
+        if not isinstance(config, dict):
+            raise TypeError(f"config must be a dict, got {type(config).__name__}")
+        if config.get("byte_offset") != self.BYTE_OFFSET:
+            raise ValueError(f"Invalid byte_offset: expected {self.BYTE_OFFSET}, got {config.get('byte_offset')}")
+        if config.get("num_bytes") != self.NUM_BYTES:
+            raise ValueError(f"Invalid num_bytes: expected {self.NUM_BYTES}, got {config.get('num_bytes')}")

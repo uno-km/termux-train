@@ -1,8 +1,8 @@
-# Sprint 7 Implementation Plan: Tiny Transformer & CharLM Toy Trainer
+# Sprint 7 Implementation Plan: Tiny Transformer & CharLM Toy Engine
 
 ## Baseline Confirmation
-- **Base Commit**: `2467f5b35172cfa913f5d0051fe117aec338e0cd` (`Docs: clarify LoRA checkpoint base model reconstruction boundary in README`)
-- **Host Test Baseline**: `461 passed, 1 warning in 6.44s`
+- **Start Baseline**: `2179a4ab8d6f71626d6c7cc0e6a105d5cbe22394` (`Record SCRUM-313 implementation commit`)
+- **Host Test Baseline**: `486 passed, 1 warning`
 - **Working Tree**: `CLEAN`
 - **Branch**: `main`
 - **Sprint 6 Status**: `Host Complete, Android Device Validation Pending`
@@ -12,133 +12,100 @@
 
 ## 1. Architectural Foundation Decisions (ADR)
 
-### 1.1 ADR 7.1: Integer / Index Representation for Embedding & Losses
-- **Problem**: In current `PythonBackend` and `NumPyBackend`, all Tensor data is cast to `float` / `np.float32`. Therefore, `Tensor([1, 2])` and `Tensor([1.0, 2.0])` are indistinguishable post-construction, preventing strict runtime validation of integer-only indices in `nn.Embedding` and class targets in `nn.CrossEntropyLoss`.
-- **Decision (Two-Tier Index Contract)**:
-  1. **Tier 1 (Sprint 7 Phase 1~3)**: Public `nn.Embedding` and `nn.CrossEntropyLoss` accept either raw integer indices (`List[int]`, `List[List[int]]`) or integer-validated index buffers (`int` type check on all elements).
-  2. **Tier 2 (Foundation Extension)**: Add explicit `dtype` tracking to `Tensor` (`dtype="float32"` by default, `dtype="int64"` for integer tensors). Integer tensors strictly enforce `requires_grad=False` and reject non-integer / floating-point operations.
+### 1.1 ADR 7.1: Tensor Dtype & Non-Differentiable Integer Tensor Foundation (Gate 7.1)
+- **Problem**: In current `PythonBackend` and `NumPyBackend`, all Tensor data is implicitly cast to `float` / `np.float32`. Therefore, `Tensor([1, 2])` and `Tensor([1.0, 2.0])` are indistinguishable post-construction, preventing runtime validation of integer-only indices in `nn.Embedding` and class targets in `nn.CrossEntropyLoss`.
+- **Decision (Strict Dtype System)**:
+  - Add explicit `dtype` attribute to `Tensor` (`dtype: str = "float32" | "int64" | "bool"`).
+  - Integer (`int64`) and Boolean (`bool`) tensors strictly enforce `requires_grad=False`. Attempting `requires_grad=True` on non-float tensors raises `ValueError`.
+  - `nn.Embedding` input strictly requires `int64` Tensor.
+  - `nn.CrossEntropyLoss` target strictly requires `int64` Tensor.
+  - Serialization, factories (`zeros`, `ones`, `tensor`), and `tolist()` preserve explicit dtype.
 
-### 1.2 ADR 7.2: Transpose API Semantics
-- **Problem**: `Tensor.transpose(*axes)` currently expects a full permutation tuple of length equal to `ndim` (e.g. `x.transpose(0, 2, 1, 3)` for 4D attention shape transformation). Writing `x.transpose(1, 2)` on a 4D tensor is an invalid permutation in the existing API.
-- **Decision**:
-  - Preserve the existing `Tensor.transpose(*axes)` full permutation contract without breaking backward compatibility.
+### 1.2 ADR 7.2: Transpose API Semantics & Axis Manipulation
+- **Contract**:
+  - Preserve existing `Tensor.transpose(*axes)` contract (expects full permutation of length `ndim`).
   - Introduce `Tensor.swapaxes(dim0, dim1)` as an explicit 2-axis swap helper.
-  - In Attention projection, explicitly use `x.transpose(0, 2, 1, 3)` and inverse `x.transpose(0, 2, 1, 3)`.
+  - In Multi-Head Attention, explicitly use `x.transpose(0, 2, 1, 3)` for 4D shape permutations without ambiguity.
 
-### 1.3 ADR 7.3: Generalized N-D Batched Matmul Specification
+### 1.3 ADR 7.3: Generalized N-D Batched Matmul with Unbroadcasting Backward
 - **Forward Contract**:
-  - Operands $A$ of shape $(\dots, M, K)$ and $B$ of shape $(\dots, K, N)$ broadcast leading batch dimensions $(\dots)$ using standard NumPy-compatible right-aligned broadcasting.
-  - 1D promotion: 1D @ 2D -> 1D vector; 2D @ 1D -> 1D vector; 1D @ 1D -> scalar.
+  - Operands $A$ of shape $(\dots, M, K)$ and $B$ of shape $(\dots, K, N)$ broadcast leading batch dimensions $(\dots)$ using standard right-aligned broadcasting.
+  - 1D promotion rules: $1\text{D} @ 2\text{D} \to 1\text{D}$; $2\text{D} @ 1\text{D} \to 1\text{D}$; $1\text{D} @ 1\text{D} \to \text{scalar}$.
 - **Backward Contract**:
-  - Upstream gradient $G$ of shape $(\text{broadcast\_batch}, M, N)$ computes:
-    $$dA_{\text{promoted}} = G \times B^T, \quad dB_{\text{promoted}} = A^T \times G$$
-  - Broadcast axes are unbroadcast (summed along broadcasted dimensions) back to the exact shape of $A$ and $B$.
+  - Promoted computation: $dA_{\text{prom}} = G \times B^T$, $dB_{\text{prom}} = A^T \times G$.
+  - Unbroadcasting: Broadcast batch axes are summed along broadcasted dimensions back to the exact shape of $A$ and $B$.
 
-### 1.4 ADR 7.4: Softmax & Causal Masking Numerical Contracts
-- **Softmax Stability**: Uses max-subtraction stabilization:
-  $$m = x.\text{max}(\text{axis}=-1, \text{keepdims}=\text{True}), \quad \text{Softmax}(x) = \frac{\exp(x - m)}{\sum \exp(x - m)}$$
-- **Max Reduction**: Implemented as detached constant for stabilization without tie-gradient explosion.
-- **Causal Mask**: Additive finite mask with sentinel value $-10^9$ (or $-10^4$ for float32 precision) to prevent `NaN` during float subtract while ensuring future token attention weights are zero within float32 epsilon.
-
----
-
-## 2. Reordered Sprint 7 Execution Phases
-
-```
-Foundation & Phase 1: SCRUM-313 - Lightweight Tokenizers (Base, Char, Byte, Word)
-  ↓
-Foundation & Phase 2: SCRUM-315 - Tiny Transformer Math Spec & Core Tensor Primitives (4D Matmul, exp, max, softmax, mask)
-  ↓
-Phase 3: SCRUM-314 - nn.Embedding Layer (Forward lookup, Scatter-Add backward)
-  ↓
-Phase 4: SCRUM-316 - nn.LayerNorm, nn.MultiHeadAttention, nn.TransformerBlock (Pre-LN, Residual, FFN)
-  ↓
-Phase 5: SCRUM-317 - nn.CrossEntropyLoss, CharLM Model, Autoregressive Training & Generation Demo
-  ↓
-Phase 6: SCRUM-318 - DocFold JSONL Dataset Pipeline
-  ↓
-Phase 7: SCRUM-319 - DocFold Sequence Mapping Toy Trainer & Convergence Gate
-```
+### 1.4 ADR 7.4: Numerical Stability & Attention Masking Contracts
+- **LogSumExp & Softmax**:
+  - `Tensor.max(axis, keepdims)`: Implements deterministic subgradient.
+  - `Tensor.logsumexp(axis, keepdims)`: $m + \log\left(\sum \exp(x - m)\right)$ for numerical stability.
+  - `Tensor.log_softmax(axis)`: $x - x.\text{logsumexp}(axis, \text{keepdims}=\text{True})$.
+  - `Tensor.softmax(axis)`: $\exp(x.\text{log\_softmax}(axis))$.
+- **Attention Masking**:
+  - Additive finite sentinel ($-10^9$ for float64, $-10^4$ for float32) or masked softmax.
+  - Requires at least one unmasked key per row; causal self-attention validates diagonal availability.
 
 ---
 
-## 3. Phase Details & Commit Strategy
+## 2. Sprint 7 Isolation Gates and Execution Order
 
-### Phase 1: SCRUM-313 - Lightweight Tokenizer Interface (Host Complete)
+```
+Gate 7.0: SCRUM-313 - Lightweight Tokenizers Hardening (Complete)
+  ├── BaseTokenizer with strict versioned JSON schema validation
+  ├── CharTokenizer (exact round-trip for known vocab, unknown fallback)
+  ├── ByteTokenizer (260-token fixed vocab, UTF-8 round-trip, strict decode error handling)
+  ├── WordTokenizer (lossless regex lexer preserving whitespace/punctuation)
+  └── Subprocess zero-dependency isolation test
+  ↓
+Gate 7.1: SCRUM-315A - Tensor Dtype Foundation
+  ├── Tensor dtype property ("float32", "int64", "bool")
+  ├── Non-differentiable int64/bool tensor invariants (requires_grad=False)
+  └── Backend dtype preservation
+  ↓
+Gate 7.2: SCRUM-315 - Transformer Math Spec & Core Primitives
+  ├── docs/tiny_transformer_spec.md
+  ├── Generalized N-D Batched Matmul (Python & NumPy Backends)
+  ├── exp, sqrt, max (subgradient), swapaxes
+  └── logsumexp, log_softmax, softmax, causal masking
+  ↓
+Gate 7.3: SCRUM-314 - nn.Embedding Layer
+  ├── int64 token index validation & out-of-bounds rejection
+  └── Forward lookup & scatter-add backward gradient accumulation
+  ↓
+Gate 7.4: SCRUM-316A - nn.LayerNorm (Isolated Component)
+  ├── Mean/Variance normalization over trailing dimension
+  ├── Learnable gamma (ones), beta (zeros) parameters
+  └── Analytical & autograd backward verification
+  ↓
+Gate 7.5: SCRUM-316B - nn.MultiHeadAttention (Isolated Component)
+  ├── Q, K, V linear projections & head split/merge
+  ├── Scaled dot-product attention with causal mask
+  └── Output projection & shape assertion pipeline
+  ↓
+Gate 7.6: SCRUM-316C - nn.TransformerBlock (Isolated Component)
+  ├── Pre-LN topology with Residual connections
+  └── 2-Layer FeedForward MLP (Linear -> Tanh/ReLU -> Linear)
+  ↓
+Gate 7.7: SCRUM-317 - CharLM Autoregressive Language Model Demo
+  ├── nn.CrossEntropyLoss (LogSumExp target gather)
+  ├── Learned Positional Embedding
+  ├── CharLM model architecture & greedy autoregressive text generation
+  └── MobileTrainer integration & convergence verification
+  ↓
+Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
+  ├── DocFold JSONL dataset parser & grammar
+  └── Sequence mapping toy trainer & on-device overfitting convergence
+```
+
+---
+
+## 3. Current Phase Status
+
+### Gate 7.0 / Phase 1: SCRUM-313 - Lightweight Tokenizer Interface (Host Complete)
 - **Status**: Host Complete
-- **Commit**: `f3e673d` (`Add deterministic lightweight tokenizers`)
-- **Host Tests**: `483 passed, 1 warning` (22 tokenization tests PASS)
-- **Files**:
-  - `termux_train/tokenization/__init__.py`
-  - `termux_train/tokenization/base.py`
-  - `termux_train/tokenization/char.py`
-  - `termux_train/tokenization/byte.py`
-  - `termux_train/tokenization/word.py`
-  - `tests/test_tokenization.py`
-- **Scope**:
-  - `BaseTokenizer` abstract base class with deterministic vocabulary management and special token constants (`<PAD>`, `<UNK>`, `<BOS>`, `<EOS>`).
-  - `CharTokenizer`: Character-level tokenizer with exact round-trip on known-vocabulary characters, unknown fallback to `<UNK>`, BOS/EOS options.
-  - `ByteTokenizer`: UTF-8 byte-level tokenizer with complete 0~255 byte vocabulary, exact round-trip for valid UTF-8 strings.
-  - `WordTokenizer`: Whitespace and punctuation preserving tokenizer with exact round-trip on known words without losing layout.
-  - Pure Python, zero Tensor / NumPy dependencies.
-
-### Phase 2: SCRUM-315 - Tiny Transformer Math Spec & Tensor Operators
-- **Files**:
-  - `docs/tiny_transformer_spec.md`
-  - `termux_train/tensor.py`
-  - `termux_train/backend/python_backend.py`
-  - `termux_train/backend/numpy_backend.py`
-  - `tests/test_tensor.py`, `tests/test_autograd.py`
-- **Scope**: Generalized N-D Batched Matmul, `exp`, `max` reduction, `swapaxes`, `softmax`, causal mask utilities.
-- **Commit Message**: `Add generalized ND matmul and transformer tensor primitives`
-
-### Phase 3: SCRUM-314 - Embedding Layer (`nn.Embedding`)
-- **Files**:
-  - `termux_train/nn/embedding.py`
-  - `termux_train/nn/__init__.py`
-  - `tests/test_nn.py`
-- **Scope**: Forward lookup, scatter-add backward gradient accumulation, shape and index validation.
-- **Commit Message**: `Add Embedding layer with scatter-add autograd`
-
-### Phase 4: SCRUM-316 - Tiny Transformer Block (`nn.LayerNorm`, `nn.MultiHeadAttention`, `nn.TransformerBlock`)
-- **Files**:
-  - `termux_train/nn/normalization.py` (`LayerNorm`)
-  - `termux_train/nn/attention.py` (`MultiHeadAttention`)
-  - `termux_train/nn/transformer.py` (`TransformerBlock`)
-  - `termux_train/nn/__init__.py`
-  - `tests/test_nn.py`
-- **Commit Message**: `Add LayerNorm, MultiHeadAttention, and TransformerBlock`
-
-### Phase 5: SCRUM-317 - CharLM Autoregressive Language Model Demo
-- **Files**:
-  - `termux_train/nn/loss.py` (`CrossEntropyLoss`)
-  - `termux_train/nn/models/charlm.py`
-  - `examples/07_charlm_autoregressive_training.py`
-  - `tests/test_training.py`
-- **Commit Message**: `Add CharLM autoregressive model and training demo`
-
-### Phase 6: SCRUM-318 - DocFold Toy Dataset Pipeline
-- **Files**:
-  - `termux_train/data/docfold.py`
-  - `tests/test_data.py`
-- **Commit Message**: `Add DocFold dataset pipeline and grammar tokenizer`
-
-### Phase 7: SCRUM-319 - DocFold Sequence Mapping Toy Trainer
-- **Files**:
-  - `examples/08_docfold_sequence_mapping.py`
-  - `reports/docfold_training_report.md`
-- **Commit Message**: `Add DocFold sequence mapping toy trainer`
-
----
-
-## 4. Resource Bounds & Metric Definitions
-
-1. **Analytical Lower-Bound Estimate**:
-   - Parameter scalar count: $\approx 25\text{K} \sim 50\text{K}$ parameters.
-   - Nominal float32 weights: $\approx 100\text{KB} \sim 200\text{KB}$.
-2. **Measured Host Metrics**:
-   - Wall-clock step time on host CPU.
-   - Peak Python traced memory via `tracemalloc`.
-3. **Measured Android Metrics (Device Gate Pending)**:
-   - Peak resident memory (RSS).
-   - Per-epoch training latency on ARM architecture.
+- **Product Commit**: `f3e673d` (`Add deterministic lightweight tokenizers`)
+- **Traceability Commit**: `2179a4a` (`Record SCRUM-313 implementation commit`)
+- **Hardening Commit**: Pending
+- **Host Tests**: `486 passed, 1 warning` (25 tokenization tests 100% PASS)
+- **Jira Status**: `검토 중 (Ready for Device Validation)`
+- **Android Termux Gate**: `PENDING`
