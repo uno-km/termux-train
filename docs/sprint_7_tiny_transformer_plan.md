@@ -116,19 +116,23 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Traceability Commit**: `363bb9c` (`Record SCRUM-315 implementation commit`)
 - **Hardening Commit**: `9a3ff76` (`Harden Dtype promotion, inplace mutation guards, IEEE 754 compliance, and atomic transactions`)
 - **Lifecycle & Setup Commit**: `55b916a` (`Add Big-Tech autograd lifecycle: no_grad, in-flight DAG release, selective saving, and NumPy setup`)
-- **Host Tests**: `527 passed, 5 warnings` (41 dtype, transformer math, hardening & lifecycle tests 100% PASS)
+- **Autograd Correctness Commit**: `747d26f` (`Harden Autograd correctness: 1D dot grad, monotonic version invalidation, tie subgradient, and thread-safe ContextVar`)
+- **Host Tests**: `547 passed, 6 warnings` (61 dtype, transformer math, hardening, lifecycle & correctness tests 100% PASS)
 - **Files**:
   - `docs/tiny_transformer_spec.md`
   - `termux_train/tensor.py`
+  - `termux_train/backend/__init__.py`
   - `termux_train/backend/base.py`
   - `termux_train/backend/python_backend.py`
   - `termux_train/backend/numpy_backend.py`
   - `termux_train/nn/module.py`
+  - `termux_train/nn/lora.py`
   - `termux_train/optim/optimizer.py`
   - `scripts/setup_termux.sh`
   - `tests/test_dtype.py`
   - `tests/test_transformer_math.py`
   - `tests/test_audit_hardening.py`
   - `tests/test_autograd_lifecycle.py`
+  - `tests/test_autograd_correctness.py`
 - **Jira Status**: `검토 중 (Ready for Device Validation)`
 - **Android Termux Gate**: `PENDING`
