@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Releases | termux-train</title>
-  <meta name="description" content="Release history and changelog for termux-train">
-  <link rel="canonical" href="https://uno-km.github.io/termux-train/versions.html">
+  <title>Training Manual | termux-train</title>
+  <meta name="description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
+  <link rel="canonical" href="https://uno-km.github.io/termux-train/training-guide.html">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   
   <!-- OpenGraph / Facebook -->
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://uno-km.github.io/termux-train/versions.html">
-  <meta property="og:title" content="Releases | termux-train">
-  <meta property="og:description" content="Release history and changelog for termux-train">
+  <meta property="og:url" content="https://uno-km.github.io/termux-train/training-guide.html">
+  <meta property="og:title" content="Training Manual | termux-train">
+  <meta property="og:description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
   <meta property="og:image" content="https://uno-km.github.io/termux-train/favicon.svg">
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Releases | termux-train">
-  <meta name="twitter:description" content="Release history and changelog for termux-train">
+  <meta name="twitter:title" content="Training Manual | termux-train">
+  <meta name="twitter:description" content="Complete training manual for Tiny Models and Small LLMs on Android Termux">
 
   <!-- Schema.org JSON-LD -->
   <script type="application/ld+json">
@@ -32,7 +32,7 @@
       "@type": "Offer",
       "price": "0.00"
     },
-    "description": "Release history and changelog for termux-train"
+    "description": "Complete training manual for Tiny Models and Small LLMs on Android Termux"
   }
   </script>
 
@@ -75,10 +75,10 @@
         <a href="installation.html" class="nav-link" data-i18n="nav.installation">📦 Installation (pip)</a>
         <a href="quickstart.html" class="nav-link" data-i18n="nav.quickstart">⚡ 5-Min Quickstart</a>
         <a href="models.html" class="nav-link" data-i18n="nav.models">🧠 Tiny Models & LoRA</a>
-        <a href="training-guide.html" class="nav-link" data-i18n="nav.guide">📚 Training Manual</a>
+        <a href="training-guide.html" class="nav-link active" data-i18n="nav.guide">📚 Training Manual</a>
         <a href="api-reference.html" class="nav-link" data-i18n="nav.api">📖 API Reference</a>
         <a href="benchmarks.html" class="nav-link" data-i18n="nav.benchmarks">📊 Benchmarks</a>
-        <a href="versions.html" class="nav-link active" data-i18n="nav.versions">🏷️ Releases & Changelog</a>
+        <a href="versions.html" class="nav-link" data-i18n="nav.versions">🏷️ Releases & Changelog</a>
       </div>
       <div class="nav-group">
         <div class="nav-title">AI Agent Specifications</div>
@@ -90,23 +90,67 @@
     </aside>
     <main class="site-main">
 
-      <h1>🏷️ Releases &amp; Changelog</h1>
-      <p style="color: var(--text-secondary); margin-bottom: 24px;">Historical release notes, major features, and version migration guide.</p>
+      <h1>📚 On-Device Tiny Model &amp; Small LLM Training Manual</h1>
+      <p style="color: var(--text-secondary); margin-bottom: 24px;">Comprehensive technical guide for training Transformers, Small LLMs, and Whisper LoRA on Android Termux.</p>
 
-      <h2>[v0.1.0-alpha] - 2026-08-20 (Current)</h2>
-      <div class="card" style="margin-bottom: 24px;">
-        <h3 style="color: var(--color-accent); margin-bottom: 8px;">🚀 Initial Public Technical Preview Release</h3>
-        <ul style="margin-left: 20px; line-height: 1.8; color: var(--text-secondary);">
-          <li><strong>Pure Python Core</strong>: Zero-dependency dynamic computation graph with reverse-mode DAG autograd.</li>
-          <li><strong>NumPy Tier-2 Engine</strong>: Automatic C-level OpenBLAS vectorization for 1D~3D matmul, softmax, and CrossEntropy.</li>
-          <li><strong>Modern Transformer</strong>: Rotary Position Embedding (RoPE), Pre-LN, and incremental KV-caching.</li>
-          <li><strong>On-Device LoRA</strong>: Low-Rank Adapter fine-tuning with &lt;100KB SafeTensors serialization and zero-overhead inference merge.</li>
-          <li><strong>HuggingFace SafeTensors</strong>: Zero-copy binary tensor I/O eliminating mobile OOM crashes.</li>
-          <li><strong>MMap Streaming</strong>: Multi-gigabyte token dataset streaming directly from disk via kernel page cache.</li>
-          <li><strong>CLI Suite</strong>: <code>termux-train info</code>, <code>check</code>, <code>score</code>, <code>demo</code>.</li>
-          <li><strong>Quality Gate</strong>: 649 unit &amp; integration tests passed (100%), 0-point audit scorecard 100/100 points.</li>
-        </ul>
-      </div>
+      <h2>1. Mobile Hardware Constraints &amp; LMK Defense</h2>
+      <p>Mobile operating systems enforce strict RAM quotas and invoke the <strong>Low Memory Killer (LMK)</strong> when free RAM drops below ~300MB. termux-train mitigates this via:</p>
+      <ul style="margin-left: 20px; line-height: 1.8; color: var(--text-secondary);">
+        <li><strong>0-Dependency Autograd Core</strong>: Minimal memory footprint (&lt; 30MB base RAM).</li>
+        <li><strong>Streaming MMap Datasets</strong>: Reads token batches directly from storage via kernel page cache.</li>
+        <li><strong>SafeTensors Binary Serialization</strong>: Fast zero-copy tensor loading without Python pickle bloat.</li>
+      </ul>
+
+      <h2>2. Recipe 1: Tiny Transformer Language Model (RoPE + KV Cache)</h2>
+      <div class="code-container">
+  <div class="code-header">
+    <span>python</span>
+    <button class="copy-btn">Copy</button>
+  </div>
+  <pre><code>from termux_train import Tensor, nn, optim, set_backend
+from termux_train.tokenization import CharTokenizer
+
+set_backend("auto")
+tokenizer = CharTokenizer()
+tokenizer.build_vocab(["to be or not to be that is the question"])
+
+model = nn.TinyTransformerLM(
+    vocab_size=tokenizer.vocab_size,
+    d_model=64,
+    num_heads=4,
+    d_ff=128,
+    num_layers=2,
+    pos_type="rope",
+    tie_weights=True
+)
+
+optimizer = optim.AdamW(model.parameters(), lr=0.005)
+# Train loop and generate with KV cache
+generated = model.generate(tokenizer.encode("to be"), max_new_tokens=20)</code></pre>
+</div>
+
+      <h2>3. Recipe 2: Tiny Whisper Speech-to-Text LoRA Fine-Tuning</h2>
+      <div class="code-container">
+  <div class="code-header">
+    <span>python</span>
+    <button class="copy-btn">Copy</button>
+  </div>
+  <pre><code># Freeze base Whisper weights and train LoRA adapters only (<30KB)
+trainable_params = nn.adapter_parameters(model)
+optimizer = optim.AdamW(trainable_params, lr=0.02)
+# Save adapter
+checkpoint.save_lora_adapter(model, "whisper_lora.safetensors")
+# Merge for zero-overhead inference
+nn.merge_lora_adapters(model)</code></pre>
+</div>
+
+      <h2>4. Recommended Hyperparameters by Device RAM</h2>
+      <table>
+        <tr><th>Device RAM</th><th>Recommended Model</th><th>d_model</th><th>Heads</th><th>Layers</th><th>Batch Size</th><th>RAM Usage</th></tr>
+        <tr><td><strong>2GB - 3GB</strong></td><td>Micro LM / LoRA Adapter</td><td>32</td><td>2</td><td>1 ~ 2</td><td>1 ~ 2</td><td><strong>&lt; 25 MB</strong></td></tr>
+        <tr><td><strong>4GB - 6GB</strong></td><td>Tiny Transformer LM / Whisper</td><td>64</td><td>4</td><td>2 ~ 4</td><td>4 ~ 8</td><td><strong>&lt; 60 MB</strong></td></tr>
+        <tr><td><strong>8GB - 12GB</strong></td><td>Small LLM (1M–5M params)</td><td>128</td><td>8</td><td>4 ~ 6</td><td>8 ~ 16</td><td><strong>&lt; 150 MB</strong></td></tr>
+      </table>
     </main>
   </div>
   <footer class="site-footer">

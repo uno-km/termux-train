@@ -3,7 +3,7 @@
 docs/build_pages.py
 ===================
 Single-Source-of-Truth Static Site Generator for termux-train Documentation.
-Generates all 7 standard HTML pages with AMEVA Cyan-Midnight styling,
+Generates all 8 standard HTML pages with AMEVA Cyan-Midnight styling,
 6-language i18n DOM binding, and complete AI/SEO metadata.
 """
 
@@ -27,6 +27,7 @@ NAV_ITEMS = [
     ("installation.html", "nav.installation", "Installation (pip)", "📦"),
     ("quickstart.html", "nav.quickstart", "5-Min Quickstart", "⚡"),
     ("models.html", "nav.models", "Tiny Models & LoRA", "🧠"),
+    ("training-guide.html", "nav.guide", "Training Manual", "📚"),
     ("api-reference.html", "nav.api", "API Reference", "📖"),
     ("benchmarks.html", "nav.benchmarks", "Benchmarks", "📊"),
     ("versions.html", "nav.versions", "Releases & Changelog", "🏷️"),
@@ -316,7 +317,7 @@ checkpoint.save_lora_adapter(model, "adapter.safetensors")"""
       <p style="color: var(--text-secondary); margin-bottom: 24px;">Train small language models, Whisper speech encoders, and low-rank adapters directly on device.</p>
 
       <div class="alert alert-info">
-        <strong>📚 Comprehensive Manual Available:</strong> Check out the full in-depth <a href="https://github.com/uno-km/termux-train/blob/main/docs/tiny_model_training_guide.md" target="_blank" style="color: var(--color-accent); font-weight: 700;">On-Device Tiny Model &amp; Small LLM Training Guide</a> on GitHub!
+        <strong>📚 Comprehensive Manual Available:</strong> Check out the full in-depth <a href="training-guide.html" style="color: var(--color-accent); font-weight: 700;">On-Device Tiny Model &amp; Small LLM Training Guide</a>!
       </div>
 
       <h2>1. Tiny Transformer LM (RoPE + KV Cache)</h2>
@@ -328,6 +329,64 @@ checkpoint.save_lora_adapter(model, "adapter.safetensors")"""
       {make_code_block(code_whisper, "python")}
 """
     return get_head("Tiny Models & LoRA", "Tiny Transformers, Small LLMs, and Whisper LoRA on Android Termux", "models.html") + get_header() + get_sidebar("models.html") + content + get_footer()
+
+def build_training_guide() -> str:
+    code_lm = """from termux_train import Tensor, nn, optim, set_backend
+from termux_train.tokenization import CharTokenizer
+
+set_backend("auto")
+tokenizer = CharTokenizer()
+tokenizer.build_vocab(["to be or not to be that is the question"])
+
+model = nn.TinyTransformerLM(
+    vocab_size=tokenizer.vocab_size,
+    d_model=64,
+    num_heads=4,
+    d_ff=128,
+    num_layers=2,
+    pos_type="rope",
+    tie_weights=True
+)
+
+optimizer = optim.AdamW(model.parameters(), lr=0.005)
+# Train loop and generate with KV cache
+generated = model.generate(tokenizer.encode("to be"), max_new_tokens=20)"""
+
+    code_whisper_full = """# Freeze base Whisper weights and train LoRA adapters only (<30KB)
+trainable_params = nn.adapter_parameters(model)
+optimizer = optim.AdamW(trainable_params, lr=0.02)
+# Save adapter
+checkpoint.save_lora_adapter(model, "whisper_lora.safetensors")
+# Merge for zero-overhead inference
+nn.merge_lora_adapters(model)"""
+
+    content = f"""
+      <h1>📚 On-Device Tiny Model &amp; Small LLM Training Manual</h1>
+      <p style="color: var(--text-secondary); margin-bottom: 24px;">Comprehensive technical guide for training Transformers, Small LLMs, and Whisper LoRA on Android Termux.</p>
+
+      <h2>1. Mobile Hardware Constraints &amp; LMK Defense</h2>
+      <p>Mobile operating systems enforce strict RAM quotas and invoke the <strong>Low Memory Killer (LMK)</strong> when free RAM drops below ~300MB. termux-train mitigates this via:</p>
+      <ul style="margin-left: 20px; line-height: 1.8; color: var(--text-secondary);">
+        <li><strong>0-Dependency Autograd Core</strong>: Minimal memory footprint (&lt; 30MB base RAM).</li>
+        <li><strong>Streaming MMap Datasets</strong>: Reads token batches directly from storage via kernel page cache.</li>
+        <li><strong>SafeTensors Binary Serialization</strong>: Fast zero-copy tensor loading without Python pickle bloat.</li>
+      </ul>
+
+      <h2>2. Recipe 1: Tiny Transformer Language Model (RoPE + KV Cache)</h2>
+      {make_code_block(code_lm, "python")}
+
+      <h2>3. Recipe 2: Tiny Whisper Speech-to-Text LoRA Fine-Tuning</h2>
+      {make_code_block(code_whisper_full, "python")}
+
+      <h2>4. Recommended Hyperparameters by Device RAM</h2>
+      <table>
+        <tr><th>Device RAM</th><th>Recommended Model</th><th>d_model</th><th>Heads</th><th>Layers</th><th>Batch Size</th><th>RAM Usage</th></tr>
+        <tr><td><strong>2GB - 3GB</strong></td><td>Micro LM / LoRA Adapter</td><td>32</td><td>2</td><td>1 ~ 2</td><td>1 ~ 2</td><td><strong>&lt; 25 MB</strong></td></tr>
+        <tr><td><strong>4GB - 6GB</strong></td><td>Tiny Transformer LM / Whisper</td><td>64</td><td>4</td><td>2 ~ 4</td><td>4 ~ 8</td><td><strong>&lt; 60 MB</strong></td></tr>
+        <tr><td><strong>8GB - 12GB</strong></td><td>Small LLM (1M–5M params)</td><td>128</td><td>8</td><td>4 ~ 6</td><td>8 ~ 16</td><td><strong>&lt; 150 MB</strong></td></tr>
+      </table>
+"""
+    return get_head("Training Manual", "Complete training manual for Tiny Models and Small LLMs on Android Termux", "training-guide.html") + get_header() + get_sidebar("training-guide.html") + content + get_footer()
 
 def build_api() -> str:
     content = f"""
@@ -414,6 +473,7 @@ def main():
         "installation.html": build_installation(),
         "quickstart.html": build_quickstart(),
         "models.html": build_models(),
+        "training-guide.html": build_training_guide(),
         "api-reference.html": build_api(),
         "benchmarks.html": build_benchmarks(),
         "versions.html": build_versions(),
@@ -425,7 +485,7 @@ def main():
             f.write(html)
         print(f"Generated: {out_path}")
 
-    print("\n🎉 All 7 GitHub Pages HTML documents generated successfully!")
+    print("\nAll 8 GitHub Pages HTML documents generated successfully!")
 
 if __name__ == "__main__":
     main()
