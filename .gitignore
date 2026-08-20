@@ -36,6 +36,9 @@ scratch/
 scratch_*.json
 *.tmp
 *.ckpt
+*.safetensors
+*.bin
+*.mmap
 
 # IDE & Editor
 .vscode/

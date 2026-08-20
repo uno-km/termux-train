@@ -1,7 +1,7 @@
 """
 termux_train.nn
 ===============
-Neural Network layers, containers, modules, activations, losses, embeddings, transformers, utils, and LoRA adapters.
+Neural Network layers, containers, modules, activations, losses, embeddings, transformers, utils, RoPE, quantization, and LoRA adapters.
 """
 
 from .module import Module
@@ -10,7 +10,9 @@ from .linear import Linear
 from .embedding import Embedding
 from .layernorm import LayerNorm
 from .attention import MultiHeadAttention
+from .rope import RotaryEmbedding
 from .transformer import FeedForward, TransformerBlock, TinyTransformerLM
+from .quantization import QuantizedLinear, quantize_linear_int8
 from .sequential import Sequential
 from .activations import ReLU, Sigmoid, Tanh
 from .loss import (
@@ -44,6 +46,9 @@ __all__ = [
     "Embedding",
     "LayerNorm",
     "MultiHeadAttention",
+    "RotaryEmbedding",
+    "QuantizedLinear",
+    "quantize_linear_int8",
     "FeedForward",
     "TransformerBlock",
     "TinyTransformerLM",
