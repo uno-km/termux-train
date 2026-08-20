@@ -118,7 +118,8 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Lifecycle & Setup Commit**: `55b916a` (`Add Big-Tech autograd lifecycle: no_grad, in-flight DAG release, selective saving, and NumPy setup`)
 - **Autograd Correctness Commit**: `747d26f` (`Harden Autograd correctness: 1D dot grad, monotonic version invalidation, tie subgradient, and thread-safe ContextVar`)
 - **Audit Polish Commit**: `ab0f910` (`Harden Autograd: conditional closure definitions, max tie spec alignment, and leaf/multithread test coverage`)
-- **Host Tests**: `552 passed, 6 warnings in 7.52s` (66 dtype, transformer math, hardening, lifecycle & correctness tests 100% PASS)
+- **Deep Hardening Commit**: `9a74a95` (`Harden Core ML Compiler: all-neginf LogSumExp/Softmax NaN defense, 3-color cyclic DAG check, N-D Linear, and Fused CrossEntropyLoss`)
+- **Host Tests**: `566 passed, 7 warnings in 7.47s` (80 dtype, transformer math, hardening, lifecycle & deep compiler correctness tests 100% PASS)
 - **Test Evidence**: `reports/junit_test_report.xml`
 - **Files**:
   - `docs/tiny_transformer_spec.md`
@@ -127,6 +128,9 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
   - `termux_train/backend/base.py`
   - `termux_train/backend/python_backend.py`
   - `termux_train/backend/numpy_backend.py`
+  - `termux_train/nn/__init__.py`
+  - `termux_train/nn/linear.py`
+  - `termux_train/nn/loss.py`
   - `termux_train/nn/module.py`
   - `termux_train/nn/lora.py`
   - `termux_train/optim/optimizer.py`
@@ -136,6 +140,7 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
   - `tests/test_audit_hardening.py`
   - `tests/test_autograd_lifecycle.py`
   - `tests/test_autograd_correctness.py`
+  - `tests/test_audit_deep_hardening.py`
 - **SCRUM-315 Ticket Stage**: `검토 중 (Ready for Device Validation)`
 - **Sprint 7 Overall Stage**: `진행 중 (Host In Progress, Device Validation Pending)`
 - **Android Termux Gate**: `PENDING`
