@@ -105,7 +105,7 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Status**: Host Complete
 - **Product Commit**: `f3e673d` (`Add deterministic lightweight tokenizers`)
 - **Traceability Commit**: `2179a4a` (`Record SCRUM-313 implementation commit`)
-- **Hardening Commit**: Pending
+- **Hardening Commit**: `b9a3640` (`Harden tokenization schema, decode semantics, and subprocess isolation`)
 - **Host Tests**: `486 passed, 1 warning` (25 tokenization tests 100% PASS)
 - **Jira Status**: `검토 중 (Ready for Device Validation)`
 - **Android Termux Gate**: `PENDING`
