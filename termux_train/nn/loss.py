@@ -20,6 +20,10 @@ def mse_loss(input: Tensor, target: Tensor, reduction: str = "mean") -> Tensor:
         target: Ground truth target Tensor.
         reduction: 'mean' (default), 'sum', or 'none'.
     """
+    target = input._ensure_tensor_on_self_backend(target)
+    if input.shape != target.shape:
+        raise ValueError(f"MSELoss requires identical input and target shapes, got {input.shape} and {target.shape}")
+
     diff = input - target
     sq = diff ** 2
 
@@ -52,6 +56,10 @@ def bce_loss(input: Tensor, target: Tensor, reduction: str = "mean", eps: float 
     """
     Binary Cross Entropy Loss with probability input in [0, 1].
     """
+    target = input._ensure_tensor_on_self_backend(target)
+    if input.shape != target.shape:
+        raise ValueError(f"BCELoss requires identical input and target shapes, got {input.shape} and {target.shape}")
+
     p_clamped = input.clamp(min_val=eps, max_val=1.0 - eps)
     term1 = target * p_clamped.log()
     one_minus_target = 1.0 - target
@@ -96,6 +104,12 @@ def binary_cross_entropy_with_logits(
     Avoids gradient vanishing caused by premature probability clamping.
     """
     target = input._ensure_tensor_on_self_backend(target)
+    if input.shape != target.shape:
+        raise ValueError(
+            f"BCEWithLogitsLoss requires identical input and target shapes, "
+            f"got {input.shape} and {target.shape}"
+        )
+
     backend = input.backend
     flat_x = backend.to_flat_list(input._data)
     flat_y = backend.to_flat_list(target._data)
@@ -167,8 +181,19 @@ def cross_entropy_loss(
     Eliminates O(V) One-Hot vector memory inflation, preventing mobile LMK kills.
     """
     target = input._ensure_tensor_on_self_backend(target)
-    backend = input.backend
+    if input.ndim < 1:
+        raise ValueError(f"CrossEntropyLoss requires input with at least 1 dimension, got shape {input.shape}")
     c_dim = input.shape[-1]
+    if c_dim == 0:
+        raise ValueError(f"CrossEntropyLoss vocab/class dimension must be > 0, got shape {input.shape}")
+
+    expected_target_shape = input.shape[:-1]
+    if target.shape != expected_target_shape:
+        raise ValueError(
+            f"CrossEntropyLoss expected target shape {expected_target_shape}, got {target.shape}"
+        )
+
+    backend = input.backend
 
     # Compute log_softmax over last dimension
     log_probs = input.log_softmax(axis=-1)
@@ -185,7 +210,7 @@ def cross_entropy_loss(
             losses.append(0.0)
             continue
         if not (0 <= t_idx < c_dim):
-            raise IndexError(f"Target index {t_idx} is out of bounds for vocab size {c_dim}")
+            raise IndexError(f"Target index {t_idx} is out of bounds for vocab/class size {c_dim}")
 
         lp = flat_lp[i * c_dim + t_idx]
         losses.append(-lp)
@@ -193,7 +218,14 @@ def cross_entropy_loss(
 
     valid_count = len(valid_indices)
     if valid_count == 0:
-        return Tensor(0.0, dtype="float32", backend=backend)
+        out = Tensor(0.0, dtype="float32", requires_grad=input.requires_grad, _prev=(input,), _op="cross_entropy", backend=backend)
+        if out.requires_grad:
+            def _backward():
+                if out.grad is not None and input.requires_grad:
+                    d_input = backend.zeros(input.shape, dtype="float32")
+                    input._accumulate_grad_data(d_input)
+            _attach_grad_fn(out, (input,), _backward)
+        return out
 
     if reduction == "mean":
         res_val = sum(losses) / float(valid_count)

@@ -129,6 +129,15 @@ class no_grad:
         return wrapper
 
 
+class _VersionCounter:
+    """Shared monotonic version tracker across storage aliases, views, and view-of-views."""
+    def __init__(self, initial_value: int = 0):
+        self.value = initial_value
+
+    def bump(self) -> None:
+        self.value += 1
+
+
 class Tensor:
     """
     Core Tensor class supporting multi-dimensional arrays, pluggable backends,
@@ -168,9 +177,16 @@ class Tensor:
         self._backward: Optional[Callable[[], None]] = None
         self._prev: Set['Tensor'] = set(_prev) if effective_requires_grad else set()
         self._op: str = _op
-        self._version: int = 0
+        self._version_counter: _VersionCounter = _VersionCounter(0)
         self._grad_fn_state: str = "live" if (effective_requires_grad and _prev) else "leaf"
-        self._base: Optional['Tensor'] = None
+
+    @property
+    def _version(self) -> int:
+        return self._version_counter.value
+
+    @_version.setter
+    def _version(self, val: int) -> None:
+        self._version_counter.value = val
 
     @classmethod
     def is_grad_enabled(cls) -> bool:
@@ -187,9 +203,7 @@ class Tensor:
         else:
             self._data = self.backend.from_data(value, dtype=self.dtype)
         if bump_version:
-            self._version += 1
-            if self._base is not None:
-                self._base._version += 1
+            self._version_counter.bump()
 
     def _accumulate_grad_data(self, grad_data: Any) -> None:
         """Accumulate incoming raw gradient data into self.grad safely."""
@@ -325,7 +339,7 @@ class Tensor:
             _op="reshape",
             backend=self.backend
         )
-        out._base = self
+        out._version_counter = self._version_counter
 
         if out.requires_grad:
             orig_shape = self.shape
@@ -380,7 +394,7 @@ class Tensor:
             _op="transpose",
             backend=self.backend
         )
-        out._base = self
+        out._version_counter = self._version_counter
 
         if out.requires_grad:
             inv_axes = _invert_permutation(axes_tuple)

@@ -4,10 +4,11 @@ tests/test_audit_deep_hardening.py
 Comprehensive Production ML Systems & Core Compiler Deep Hardening Test Suite:
   1. Fully-Masked Row LogSumExp & Softmax (-inf row without NaN)
   2. 4D and 5D Linear Layer forward & backward
-  3. Cyclic DAG Autograd 3-Color Cycle Detection
-  4. View / Transpose Mutation Version Propagation to Base
-  5. Fused CrossEntropyLoss with int64 target indices and ignore_index
-  6. BCEWithLogitsLoss extreme logit stability and exact gradient
+  3. Cyclic DAG Autograd 3-Color Cycle Detection & Diamond DAG preservation
+  4. View-of-View and Sibling View Mutation Version Invalidation
+  5. Fused CrossEntropyLoss edge contracts, all-ignore handling, and invalid index bounds
+  6. BCEWithLogitsLoss shape contracts, extreme logit stability, and exact gradient
+  7. Softmax multi-axis and keepdims correctness
 """
 
 import math
@@ -47,6 +48,20 @@ def test_fully_masked_sequence_logsumexp_and_softmax_no_nan(backend_name):
     assert grad_list[1] == [0.0, 0.0]
 
 
+@pytest.mark.parametrize("backend_name", available_backends())
+@pytest.mark.parametrize("axis", [0, 1, -1])
+def test_softmax_multi_axes_and_keepdims(backend_name, axis):
+    set_backend(backend_name)
+    x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    probs = x.softmax(axis=axis)
+    if axis in (1, -1):
+        assert pytest.approx(sum(probs.tolist()[0])) == 1.0
+        assert pytest.approx(sum(probs.tolist()[1])) == 1.0
+    elif axis == 0:
+        assert pytest.approx(probs.tolist()[0][0] + probs.tolist()[1][0]) == 1.0
+        assert pytest.approx(probs.tolist()[0][1] + probs.tolist()[1][1]) == 1.0
+
+
 # =============================================================================
 # 2. Level A-02: 4D and 5D Linear Layer Forward & Backward
 # =============================================================================
@@ -75,7 +90,7 @@ def test_4d_and_5d_linear_forward_backward(backend_name):
 
 
 # =============================================================================
-# 3. Level A-03: Cyclic DAG Autograd 3-Color Cycle Detection
+# 3. Level A-03: Cyclic DAG Autograd 3-Color Cycle Detection & Diamond Preservation
 # =============================================================================
 
 @pytest.mark.parametrize("backend_name", available_backends())
@@ -90,27 +105,48 @@ def test_cyclic_dag_autograd_cycle_detection(backend_name):
         y.sum().backward()
 
 
+@pytest.mark.parametrize("backend_name", available_backends())
+def test_diamond_dag_not_detected_as_cycle(backend_name):
+    set_backend(backend_name)
+    # Diamond graph: x -> y1, y2 -> z = y1 + y2
+    x = Tensor([2.0, 3.0], requires_grad=True)
+    y1 = x * 2.0
+    y2 = x * 3.0
+    z = y1 + y2
+    z.sum().backward()
+    assert x.grad.tolist() == [5.0, 5.0]
+
+
 # =============================================================================
-# 4. Level A-06: View / Transpose Version Propagation to Base Tensor
+# 4. Level A-06: View-of-View and Sibling View Version Invalidation
 # =============================================================================
 
 @pytest.mark.parametrize("backend_name", available_backends())
-def test_view_mutation_invalidates_base_graph(backend_name):
+def test_view_of_view_and_sibling_view_version_invalidation(backend_name):
     set_backend(backend_name)
-    x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
-    loss = (x * 2.0).sum()
+    base = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    loss = (base * 2.0).sum()
 
-    # Create view / transpose and mutate it
-    view_x = x.transpose()
-    view_x.data = [[10.0, 20.0], [30.0, 40.0]]
+    # View-of-view chain: base -> v1 -> v2
+    v1 = base.reshape((4,))
+    v2 = v1.reshape((2, 2))
+    # Sibling view: base -> sibling
+    sibling = base.transpose()
 
-    # Mutating view_x bumped view_x._version AND x._version
+    # Mutating v2 bumps the shared version counter
+    v2.data = [[10.0, 20.0], [30.0, 40.0]]
+
+    assert base._version > 0
+    assert v1._version == base._version
+    assert sibling._version == base._version
+
+    # Forward graph built on base must fail
     with pytest.raises(RuntimeError, match="modified by an inplace operation"):
         loss.backward()
 
 
 # =============================================================================
-# 5. Level A-05: Fused CrossEntropyLoss with int64 Targets
+# 5. Level A-05: Fused CrossEntropyLoss with int64 Targets & Edge Contracts
 # =============================================================================
 
 @pytest.mark.parametrize("backend_name", available_backends())
@@ -124,69 +160,81 @@ def test_fused_cross_entropy_loss_int64_targets(backend_name):
     criterion = nn.CrossEntropyLoss(reduction="mean")
     loss = criterion(logits, targets)
 
-    # Manual analytical calculation
-    # Sample 0: -log(exp(2.0) / (exp(2.0) + exp(1.0) + exp(0.1)))
     denom0 = math.exp(2.0) + math.exp(1.0) + math.exp(0.1)
     loss0 = -math.log(math.exp(2.0) / denom0)
 
-    # Sample 1: -log(exp(2.5) / (exp(0.5) + exp(2.5) + exp(0.3)))
     denom1 = math.exp(0.5) + math.exp(2.5) + math.exp(0.3)
     loss1 = -math.log(math.exp(2.5) / denom1)
 
     expected_loss = (loss0 + loss1) / 2.0
     assert pytest.approx(loss.item()) == expected_loss
 
-    # Backward gradient verification
     loss.backward()
     assert logits.grad is not None
     grad = logits.grad.tolist()
-    # dL/dx0 = (softmax(x0) - [1, 0, 0]) / 2.0
     p0 = [math.exp(2.0)/denom0, math.exp(1.0)/denom0, math.exp(0.1)/denom0]
     expected_grad0 = [(p - target_val)/2.0 for p, target_val in zip(p0, [1.0, 0.0, 0.0])]
     assert grad[0] == pytest.approx(expected_grad0)
 
 
 @pytest.mark.parametrize("backend_name", available_backends())
-def test_cross_entropy_ignore_index(backend_name):
+def test_cross_entropy_all_ignored_targets(backend_name):
     set_backend(backend_name)
     logits = Tensor([[2.0, 1.0], [0.5, 2.5]], requires_grad=True)
-    # Sample 1 is ignored (-100)
-    targets = Tensor([0, -100], dtype="int64")
+    # All samples are ignored (-100)
+    targets = Tensor([-100, -100], dtype="int64")
 
     criterion = nn.CrossEntropyLoss(reduction="mean", ignore_index=-100)
     loss = criterion(logits, targets)
-
-    denom0 = math.exp(2.0) + math.exp(1.0)
-    expected_loss = -math.log(math.exp(2.0) / denom0)
-    assert pytest.approx(loss.item()) == expected_loss
+    assert loss.item() == 0.0
 
     loss.backward()
-    grad = logits.grad.tolist()
-    # Ignored sample gradient must be 0.0
-    assert grad[1] == [0.0, 0.0]
+    assert logits.grad is not None
+    assert logits.grad.tolist() == [[0.0, 0.0], [0.0, 0.0]]
+
+
+@pytest.mark.parametrize("backend_name", available_backends())
+def test_cross_entropy_shape_and_bounds_validation(backend_name):
+    set_backend(backend_name)
+    logits = Tensor([[2.0, 1.0, 0.5]], requires_grad=True)
+
+    # 1. Target shape mismatch
+    with pytest.raises(ValueError, match="target shape"):
+        nn.CrossEntropyLoss()(logits, Tensor([[0, 1]], dtype="int64"))
+
+    # 2. Target index out of bounds (> 2)
+    with pytest.raises(IndexError, match="out of bounds"):
+        nn.CrossEntropyLoss()(logits, Tensor([5], dtype="int64"))
+
+    # 3. Negative target index (other than -100)
+    with pytest.raises(IndexError, match="out of bounds"):
+        nn.CrossEntropyLoss()(logits, Tensor([-1], dtype="int64"))
 
 
 # =============================================================================
-# 6. Level A-04: BCEWithLogitsLoss Extreme Stability & Gradient Correctness
+# 6. Level A-04: BCEWithLogitsLoss Extreme Stability & Shape Validation
 # =============================================================================
 
 @pytest.mark.parametrize("backend_name", available_backends())
 def test_bce_with_logits_loss_extreme_stability(backend_name):
     set_backend(backend_name)
-    # Extreme logit inputs: +100.0 (near prob 1.0) and -100.0 (near prob 0.0)
     logits = Tensor([100.0, -100.0], requires_grad=True)
     targets = Tensor([1.0, 0.0])
 
     loss = nn.BCEWithLogitsLoss(reduction="mean")(logits, targets)
-    # Both samples are accurately predicted -> loss should be practically 0.0
     assert pytest.approx(loss.item(), abs=1e-6) == 0.0
 
-    # Misclassified extreme logit: logit = -100.0, target = 1.0 (should have massive non-vanishing loss)
     logits_bad = Tensor([-100.0], requires_grad=True)
     targets_bad = Tensor([1.0])
     loss_bad = nn.BCEWithLogitsLoss(reduction="mean")(logits_bad, targets_bad)
     assert loss_bad.item() > 90.0
 
     loss_bad.backward()
-    # Gradient should be (sigmoid(-100) - 1.0) = -1.0 (non-vanishing!)
     assert pytest.approx(logits_bad.grad.item()) == -1.0
+
+
+@pytest.mark.parametrize("backend_name", available_backends())
+def test_bce_with_logits_loss_shape_mismatch(backend_name):
+    set_backend(backend_name)
+    with pytest.raises(ValueError, match="identical input and target shapes"):
+        nn.BCEWithLogitsLoss()(Tensor([1.0, 2.0]), Tensor([1.0]))
