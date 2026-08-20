@@ -1,7 +1,7 @@
 """
 termux_train.nn
 ===============
-Neural Network layers, containers, modules, activations, losses, embeddings, transformers, and LoRA adapters.
+Neural Network layers, containers, modules, activations, losses, embeddings, transformers, utils, and LoRA adapters.
 """
 
 from .module import Module
@@ -32,6 +32,7 @@ from .lora import (
     merge_lora_adapters,
     unmerge_lora_adapters,
 )
+from .utils import clip_grad_norm_
 
 # Alias
 binary_cross_entropy_with_logits = bce_with_logits_loss = BCEWithLogitsLoss
@@ -66,4 +67,5 @@ __all__ = [
     "load_adapter_state_dict",
     "merge_lora_adapters",
     "unmerge_lora_adapters",
+    "clip_grad_norm_",
 ]

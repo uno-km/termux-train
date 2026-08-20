@@ -2,20 +2,40 @@
 termux_train.nn.attention
 =========================
 Multi-Head Attention Layer with Causal Mask Caching, Cross-Attention Support,
-and N-D Batch Shape Generalization for Production Mobile Transformers.
+Joint Causal+Padding Masking, Incremental KV Caching, and N-D Batch Generalization.
 """
 
 import math
-from typing import Optional
+from typing import Optional, Tuple, Union
 from .module import Module
 from .linear import Linear
 from ..tensor import Tensor
 
 
+def _concat_head_tensors(t1: Tensor, t2: Tensor, backend) -> Tensor:
+    """Concatenates two 4D tensors (B, H, S1, d_k) and (B, H, S2, d_k) along axis 2 -> (B, H, S1+S2, d_k)."""
+    B, H, S1, d_k = t1.shape
+    _, _, S2, _ = t2.shape
+    f1 = backend.to_flat_list(t1._data)
+    f2 = backend.to_flat_list(t2._data)
+
+    out_flat = []
+    # Interleave along axis 2
+    for b in range(B):
+        for h in range(H):
+            start1 = (b * H + h) * S1 * d_k
+            start2 = (b * H + h) * S2 * d_k
+            out_flat.extend(f1[start1:start1 + S1 * d_k])
+            out_flat.extend(f2[start2:start2 + S2 * d_k])
+
+    out_data = backend.from_data(backend.reshape(out_flat, (B, H, S1 + S2, d_k)), dtype="float32")
+    return Tensor(out_data, dtype="float32", backend=backend)
+
+
 class MultiHeadAttention(Module):
     """
     Multi-Head Attention with scaled dot-product attention, zero-allocation causal mask caching,
-    and cross-attention (Query, Key, Value) support.
+    joint causal & padding masking, and incremental KV caching for fast inference.
     """
 
     def __init__(
@@ -77,13 +97,19 @@ class MultiHeadAttention(Module):
         key: Optional[Tensor] = None,
         value: Optional[Tensor] = None,
         mask: Optional[Tensor] = None,
-        causal: bool = False
-    ) -> Tensor:
+        causal: bool = False,
+        past_key_value: Optional[Tuple[Tensor, Tensor]] = None,
+        use_cache: bool = False
+    ) -> Union[Tensor, Tuple[Tensor, Tuple[Tensor, Tensor]]]:
         """
         Forward pass of Multi-Head Attention:
           query: shape (*B, S_q, d_model) or (S_q, d_model)
           key: shape (*B, S_k, d_model) (defaults to query for self-attention)
           value: shape (*B, S_k, d_model) (defaults to key)
+          mask: optional custom padding or attention mask
+          causal: whether to apply lower-triangular causal attention mask
+          past_key_value: optional cached (K, V) head tensors from previous decoding steps
+          use_cache: if True, returns (output, (present_K, present_V))
         """
         if key is None:
             key = query
@@ -98,7 +124,6 @@ class MultiHeadAttention(Module):
             k = key.reshape(1, key.shape[0], key.shape[1])
             v = value.reshape(1, value.shape[0], value.shape[1])
         elif orig_ndim > 3:
-            # Flatten arbitrary leading batch dimensions (*B, S, D) -> (B_flat, S, D)
             b_flat = 1
             for dim in orig_batch_shape:
                 b_flat *= dim
@@ -129,16 +154,26 @@ class MultiHeadAttention(Module):
         proj_k = proj_k.reshape(B, S_k, H, d_k).transpose(0, 2, 1, 3)
         proj_v = proj_v.reshape(B, S_k, H, d_k).transpose(0, 2, 1, 3)
 
-        # 3. Scaled Dot-Product Attention: Q @ K^T / sqrt(d_k)
-        k_t = proj_k.transpose(0, 1, 3, 2)  # (B, H, d_k, S_k)
-        scale = 1.0 / math.sqrt(d_k)
-        scores = (proj_q @ k_t) * scale  # (B, H, S_q, S_k)
+        # Incremental KV Cache Concatenation
+        if past_key_value is not None:
+            past_k, past_v = past_key_value
+            proj_k = _concat_head_tensors(past_k, proj_k, backend=q.backend)
+            proj_v = _concat_head_tensors(past_v, proj_v, backend=q.backend)
 
-        # 4. Apply Mask (Causal or Custom)
-        if causal:
+        present_key_value = (proj_k, proj_v) if use_cache else None
+        current_s_k = proj_k.shape[2]
+
+        # 3. Scaled Dot-Product Attention: Q @ K^T / sqrt(d_k)
+        k_t = proj_k.transpose(0, 1, 3, 2)  # (B, H, d_k, S_k_total)
+        scale = 1.0 / math.sqrt(d_k)
+        scores = (proj_q @ k_t) * scale  # (B, H, S_q, S_k_total)
+
+        # 4. Joint Causal + Padding Mask Application
+        if causal and S_q == current_s_k:
             causal_m = self._get_causal_mask(S_q, backend=q.backend)
             scores = scores + causal_m
-        elif mask is not None:
+
+        if mask is not None:
             mask_t = q._ensure_tensor_on_self_backend(mask)
             scores = scores + mask_t
 
@@ -155,10 +190,15 @@ class MultiHeadAttention(Module):
         out = self.out_proj(context)
 
         if orig_ndim == 2:
-            return out.reshape(S_q, self.d_model)
+            final_out = out.reshape(S_q, self.d_model)
         elif orig_ndim > 3:
-            return out.reshape(*(orig_batch_shape + (S_q, self.d_model)))
-        return out
+            final_out = out.reshape(*(orig_batch_shape + (S_q, self.d_model)))
+        else:
+            final_out = out
+
+        if use_cache:
+            return final_out, present_key_value
+        return final_out
 
     def __repr__(self) -> str:
         return f"MultiHeadAttention(d_model={self.d_model}, num_heads={self.num_heads})"
