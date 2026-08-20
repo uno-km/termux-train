@@ -164,3 +164,25 @@ class NumPyBackend(BaseBackend):
 
     def take(self, data: Any, index: int, axis: int = 0) -> Any:
         return np.take(data, index, axis=axis)
+
+    def gather_rows(self, weight_data: Any, row_indices: List[int], out_shape: Tuple[int, ...]) -> Any:
+        idx_arr = np.array(row_indices, dtype=np.int64)
+        gathered = weight_data[idx_arr]
+        return gathered.reshape(out_shape)
+
+    def scatter_add_rows(self, target_data: Any, row_indices: List[int], grad_data: Any, padding_idx: Optional[int] = None) -> Any:
+        idx_arr = np.array(row_indices, dtype=np.int64)
+        e_dim = target_data.shape[-1]
+        if isinstance(grad_data, np.ndarray):
+            flat_grad = grad_data.reshape(-1, e_dim)
+        else:
+            flat_grad = np.array(grad_data, dtype=np.float32).reshape(-1, e_dim)
+
+        if padding_idx is not None:
+            mask = (idx_arr != padding_idx)
+            idx_arr = idx_arr[mask]
+            flat_grad = flat_grad[mask]
+
+        if len(idx_arr) > 0:
+            np.add.at(target_data, idx_arr, flat_grad)
+        return target_data

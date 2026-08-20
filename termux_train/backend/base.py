@@ -157,3 +157,13 @@ class BaseBackend(ABC):
     def take(self, data: Any, index: int, axis: int = 0) -> Any:
         """Extract a slice along the specified axis (e.g. batch indexing)."""
         pass
+
+    @abstractmethod
+    def gather_rows(self, weight_data: Any, row_indices: List[int], out_shape: Tuple[int, ...]) -> Any:
+        """Gather row vectors from weight_data corresponding to row_indices and reshape to out_shape."""
+        pass
+
+    @abstractmethod
+    def scatter_add_rows(self, target_data: Any, row_indices: List[int], grad_data: Any, padding_idx: Optional[int] = None) -> Any:
+        """Accumulate gradients from grad_data into target_data at row_indices (scatter-add)."""
+        pass

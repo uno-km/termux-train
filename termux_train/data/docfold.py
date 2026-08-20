@@ -176,7 +176,7 @@ class DocFoldDataset:
                 b_inps.append(inp_seq)
                 b_tgts.append(tgt_seq)
 
-            if b_inps:
+            if b_inps and len(b_inps[0]) > 0:
                 x_t = Tensor(b_inps, dtype="int64")
                 y_t = Tensor(b_tgts, dtype="int64")
                 batches.append((x_t, y_t))

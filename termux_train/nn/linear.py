@@ -28,24 +28,30 @@ class Linear(Module):
         in_features: int,
         out_features: int,
         bias: bool = True,
-        backend: Optional[BaseBackend] = None
+        backend: Optional[BaseBackend] = None,
+        _weight: Optional[Tensor] = None
     ):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         b = backend or get_backend()
         
-        # Initialize weights: He/Kaiming uniform distribution U(-1/sqrt(in), 1/sqrt(in))
-        bound = 1.0 / math.sqrt(in_features) if in_features > 0 else 1.0
-        
-        # Generate random weights of shape (in_features, out_features)
-        weight_data = [
-            [random.uniform(-bound, bound) for _ in range(out_features)]
-            for _ in range(in_features)
-        ]
-        self.weight = Parameter(weight_data, requires_grad=True, backend=b)
+        if _weight is not None:
+            if isinstance(_weight, Parameter):
+                self.weight = _weight
+            else:
+                self.weight = Parameter(_weight)
+        else:
+            # Initialize weights: He/Kaiming uniform distribution U(-1/sqrt(in), 1/sqrt(in))
+            bound = 1.0 / math.sqrt(in_features) if in_features > 0 else 1.0
+            weight_data = [
+                [random.uniform(-bound, bound) for _ in range(out_features)]
+                for _ in range(in_features)
+            ]
+            self.weight = Parameter(weight_data, requires_grad=True, backend=b)
         
         if bias:
+            bound = 1.0 / math.sqrt(in_features) if in_features > 0 else 1.0
             bias_data = [[random.uniform(-bound, bound) for _ in range(out_features)]]
             self.bias: Optional[Parameter] = Parameter(bias_data, requires_grad=True, backend=b)
         else:

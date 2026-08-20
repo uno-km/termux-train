@@ -108,7 +108,8 @@ def _validate_recursive_json_dict(val: Any, name: str = "extra") -> None:
 
 
 def _atomic_write_checkpoint(abs_path: str, container_json: str) -> None:
-    """Atomically writes container JSON via temporary file, fsync, and atomic rename."""
+    """Atomically writes container JSON via temporary file, fsync, and atomic rename with EXDEV fallback."""
+    import shutil
     parent_dir = os.path.dirname(abs_path)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
@@ -119,7 +120,13 @@ def _atomic_write_checkpoint(abs_path: str, container_json: str) -> None:
             f.write(container_json)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, abs_path)
+        try:
+            os.replace(tmp_path, abs_path)
+        except OSError as os_err:
+            if getattr(os_err, "errno", None) == 18:  # EXDEV: Invalid cross-device link on Android sdcard
+                shutil.move(tmp_path, abs_path)
+            else:
+                raise
     except Exception as e:
         cleanup_err = None
         if os.path.exists(tmp_path):

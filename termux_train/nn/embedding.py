@@ -2,7 +2,7 @@
 termux_train.nn.embedding
 =========================
 Embedding Layer for Mapping Discrete Tokens to Differentiable Dense Vectors.
-Supports arbitrary N-D index tensors, padding_idx zeroing, and exact backward accumulation.
+Supports arbitrary N-D index tensors, padding_idx zeroing, and vectorized backend scatter-add.
 """
 
 from typing import Optional
@@ -76,13 +76,10 @@ class Embedding(Module):
         input_t = self.weight._ensure_tensor_on_self_backend(input)
         flat_indices = backend.to_flat_list(input_t._data)
 
-        w_flat = backend.to_flat_list(self.weight._data)
         v_size = self.num_embeddings
         e_dim = self.embedding_dim
 
-        out_flat = []
         valid_int_indices = []
-
         for idx_val in flat_indices:
             idx = int(idx_val)
             if not (0 <= idx < v_size):
@@ -90,11 +87,9 @@ class Embedding(Module):
                     f"Index out of range in Embedding lookup: got {idx}, but num_embeddings is {v_size}"
                 )
             valid_int_indices.append(idx)
-            start = idx * e_dim
-            out_flat.extend(w_flat[start:start + e_dim])
 
         out_shape = input_t.shape + (e_dim,)
-        out_data = backend.from_data(backend.reshape(out_flat, out_shape), dtype="float32")
+        out_data = backend.gather_rows(self.weight._data, valid_int_indices, out_shape)
         out = Tensor(
             out_data,
             dtype="float32",
@@ -110,20 +105,12 @@ class Embedding(Module):
 
             def _backward():
                 if out.grad is not None and w_weight.requires_grad:
-                    flat_g = backend.to_flat_list(out.grad._data)
-                    d_w_flat = [0.0] * (v_size * e_dim)
-
-                    for sample_i, token_idx in enumerate(valid_int_indices):
-                        if p_idx is not None and token_idx == p_idx:
-                            continue
-                        g_start = sample_i * e_dim
-                        w_start = token_idx * e_dim
-                        for dim_j in range(e_dim):
-                            d_w_flat[w_start + dim_j] += flat_g[g_start + dim_j]
-
-                    d_w_data = backend.from_data(
-                        backend.reshape(d_w_flat, (v_size, e_dim)),
-                        dtype="float32"
+                    d_w_zeros = backend.zeros((v_size, e_dim), dtype="float32")
+                    d_w_data = backend.scatter_add_rows(
+                        d_w_zeros,
+                        valid_int_indices,
+                        out.grad._data,
+                        padding_idx=p_idx
                     )
                     w_weight._accumulate_grad_data(d_w_data)
 

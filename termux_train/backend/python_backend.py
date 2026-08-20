@@ -542,3 +542,25 @@ class PythonBackend(BaseBackend):
         if not isinstance(data, list):
             raise TypeError(f"Cannot index non-list data of shape {shape}")
         return data[index]
+
+    def gather_rows(self, weight_data: Any, row_indices: List[int], out_shape: Tuple[int, ...]) -> Any:
+        w_flat = self.to_flat_list(weight_data)
+        e_dim = out_shape[-1]
+        out_flat = []
+        for idx in row_indices:
+            start = idx * e_dim
+            out_flat.extend(w_flat[start:start + e_dim])
+        return self.from_data(self.reshape(out_flat, out_shape), dtype="float32")
+
+    def scatter_add_rows(self, target_data: Any, row_indices: List[int], grad_data: Any, padding_idx: Optional[int] = None) -> Any:
+        target_flat = self.to_flat_list(target_data)
+        grad_flat = self.to_flat_list(grad_data)
+        e_dim = len(target_flat) // self.get_shape(target_data)[0]
+        for sample_i, token_idx in enumerate(row_indices):
+            if padding_idx is not None and token_idx == padding_idx:
+                continue
+            g_start = sample_i * e_dim
+            w_start = token_idx * e_dim
+            for dim_j in range(e_dim):
+                target_flat[w_start + dim_j] += grad_flat[g_start + dim_j]
+        return self.from_data(self.reshape(target_flat, self.get_shape(target_data)), dtype="float32")

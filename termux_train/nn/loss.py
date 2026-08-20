@@ -181,6 +181,11 @@ def cross_entropy_loss(
     Eliminates O(V) One-Hot vector memory inflation, preventing mobile LMK kills.
     """
     target = input._ensure_tensor_on_self_backend(target)
+    if target.dtype not in ("int64", "int32"):
+        raise TypeError(
+            f"CrossEntropyLoss target must have integer dtype ('int64' or 'int32'), "
+            f"got dtype='{target.dtype}'. For probability targets, use soft cross-entropy."
+        )
     if input.ndim < 1:
         raise ValueError(f"CrossEntropyLoss requires input with at least 1 dimension, got shape {input.shape}")
     c_dim = input.shape[-1]

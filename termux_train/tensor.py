@@ -73,7 +73,7 @@ def _infer_dtype_from_data(data: Any) -> str:
     return "float32"
 
 def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Tensor':
-    """Sum out broadcast dimensions to match target_shape."""
+    """Sum out broadcast dimensions to match target_shape using multi-axis reduction."""
     current_shape = grad_tensor.shape
     if current_shape == target_shape:
         return grad_tensor
@@ -83,12 +83,14 @@ def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Te
     pad = cur_ndim - tgt_ndim
 
     out = grad_tensor
-    for _ in range(pad):
-        out = out.sum(axis=0, keepdims=False)
+    if pad > 0:
+        lead_axes = tuple(range(pad))
+        out = out.sum(axis=lead_axes, keepdims=False)
 
-    for i in range(tgt_ndim):
-        if target_shape[i] == 1 and out.shape[i] > 1:
-            out = out.sum(axis=i, keepdims=True)
+    if tgt_ndim > 0:
+        trail_axes = tuple(i for i in range(tgt_ndim) if target_shape[i] == 1 and out.shape[i] > 1)
+        if trail_axes:
+            out = out.sum(axis=trail_axes, keepdims=True)
 
     return out
 
