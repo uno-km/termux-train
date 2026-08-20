@@ -8,7 +8,7 @@ __version__ = "0.1.0-alpha"
 __author__ = "AMEVA Team"
 
 from .backend import get_backend, set_backend, available_backends
-from .tensor import Tensor, tensor, zeros, ones, zeros_like, ones_like, randn
+from .tensor import Tensor, tensor, zeros, ones, zeros_like, ones_like, randn, no_grad
 from . import nn
 from . import optim
 from . import runtime
@@ -24,6 +24,7 @@ __all__ = [
     "zeros_like",
     "ones_like",
     "randn",
+    "no_grad",
     
     # NN, Optim, Runtime & Tokenization Submodules
     "nn",
