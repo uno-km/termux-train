@@ -119,7 +119,9 @@ Gate 7.8: SCRUM-318 & SCRUM-319 - DocFold Dataset Pipeline & Toy Trainer
 - **Autograd Correctness Commit**: `747d26f` (`Harden Autograd correctness: 1D dot grad, monotonic version invalidation, tie subgradient, and thread-safe ContextVar`)
 - **Audit Polish Commit**: `ab0f910` (`Harden Autograd: conditional closure definitions, max tie spec alignment, and leaf/multithread test coverage`)
 - **Deep Hardening Commit**: `9a74a95` (`Harden Core ML Compiler: all-neginf LogSumExp/Softmax NaN defense, 3-color cyclic DAG check, N-D Linear, and Fused CrossEntropyLoss`)
-- **Host Tests**: `566 passed, 7 warnings in 7.47s` (80 dtype, transformer math, hardening, lifecycle & deep compiler correctness tests 100% PASS)
+- **VersionCounter & Contract Commit**: `92ba6b9` (`Harden Autograd & Losses: _VersionCounter shared alias invalidation, strict loss shape/bounds contracts, and all-ignore handling`)
+- **Host Tests**: `578 passed, 7 warnings in 6.61s` (92 dtype, transformer math, hardening, lifecycle & deep compiler correctness tests 100% PASS)
+- **Memory Efficiency Contract**: Fused Cross-Entropy eliminates $O(N \cdot C)$ one-hot target tensor heap allocation, requiring only $O(N)$ integer targets.
 - **Test Evidence**: `reports/junit_test_report.xml`
 - **Files**:
   - `docs/tiny_transformer_spec.md`
