@@ -75,6 +75,12 @@ class Module:
                     child_prefix = f"{prefix}.{name}" if prefix else name
                     stack.append((child_prefix, child))
 
+    def named_modules(self, memo: Optional[set] = None, prefix: str = "", remove_duplicate: bool = True) -> Iterator[Tuple[str, 'Module']]:
+        """Returns an iterator over all modules in the network, yielding both the name and the module."""
+        for mod_prefix, mod in self._walk_modules():
+            eff_prefix = f"{prefix}.{mod_prefix}" if (prefix and mod_prefix) else (mod_prefix or prefix)
+            yield eff_prefix, mod
+
     def named_parameters(self, prefix: str = "", recurse: bool = True) -> List[Tuple[str, Parameter]]:
         """Returns a list of (name, parameter) tuples in the module with deduplication."""
         seen_params = set()

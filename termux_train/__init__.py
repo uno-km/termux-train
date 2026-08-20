@@ -13,6 +13,8 @@ from . import nn
 from . import optim
 from . import runtime
 from . import tokenization
+from . import checkpoint
+from . import data
 from .utils.termux_env import is_termux, is_android, get_device_info
 
 __all__ = [
@@ -26,11 +28,13 @@ __all__ = [
     "randn",
     "no_grad",
     
-    # NN, Optim, Runtime & Tokenization Submodules
+    # Submodules
     "nn",
     "optim",
     "runtime",
     "tokenization",
+    "checkpoint",
+    "data",
     
     # Backend
     "get_backend",
