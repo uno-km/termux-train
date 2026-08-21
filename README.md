@@ -8,7 +8,7 @@
 [![PyPI - Version](https://img.shields.io/pypi/v/termux-train.svg?color=0066cc&logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/termux-train/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/termux-train.svg?logo=python&logoColor=white&style=for-the-badge)](https://pypi.org/project/termux-train/)
 [![Audit Scorecard](https://img.shields.io/badge/Audit%20Scorecard-100.0%20%2F%20100.0%20(Grade%20A%2B)-brightgreen.svg?style=for-the-badge)](https://uno-km.vercel.app/lib/train/benchmarks.html)
-[![Open Collective](https://img.shields.io/badge/Open_Collective-AOSF_Fund-004499?style=flat&logo=opencollective)](https://opencollective.com/ameva-foundation)
+[![Open Collective](https://img.shields.io/badge/Open_Collective-AOSF_Fund-004499?style=flat&logo=opencollective)](https://opencollective.com/ameva-fund)
 [![GitHub Sponsors](https://img.shields.io/badge/GitHub_Sponsors-uno--km-ea4aaa?style=flat&logo=githubsponsors)](https://github.com/sponsors/uno-km)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](LICENSE)
 [![AMEVA Foundation](https://img.shields.io/badge/Foundation-AOSF_Tier_1-orange?style=for-the-badge)](https://uno-km.vercel.app/docs/foundation/)
@@ -245,6 +245,6 @@ Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 AMEVA is an independent open-source public good governed under the **AMEVA Open-Source Foundation (AOSF)**. All sponsorship funds are 100% publicly audited and dedicated to physical ARM64 testbeds and CI/CD GPU runners.
 
-- **Open Collective (Non-Profit 501(c)(6))**: [https://opencollective.com/ameva-foundation](https://opencollective.com/ameva-foundation)
+- **Open Collective (Non-Profit 501(c)(6))**: [https://opencollective.com/ameva-fund](https://opencollective.com/ameva-fund)
 - **GitHub Sponsors**: [https://github.com/sponsors/uno-km](https://github.com/sponsors/uno-km)
 - **Official Foundation Portal**: [https://uno-km.vercel.app/docs/foundation/sponsorship.html](https://uno-km.vercel.app/docs/foundation/sponsorship.html)
