@@ -4,14 +4,17 @@
 
 <div align="center">
 
-[![PyPI - Version](https://img.shields.io/pypi/v/termux-train.svg?color=0066cc&logo=pypi&logoColor=white)](https://pypi.org/project/termux-train/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/termux-train.svg?color=00f5d4&logo=pypi&logoColor=white)](https://pypi.org/project/termux-train/)
-[![PyPI - Total Downloads](https://img.shields.io/pepy/dt/termux-train.svg?color=blue&logo=pypi&logoColor=white)](https://pepy.tech/project/termux-train)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/termux-train.svg?logo=python&logoColor=white)](https://pypi.org/project/termux-train/)
-[![Docs](https://img.shields.io/badge/Docs-GitHub%20Pages-00f5d4.svg?logo=github&logoColor=white)](https://uno-km.github.io/termux-train/)
-[![Audit Scorecard](https://img.shields.io/badge/Audit%20Scorecard-100.0%20%2F%20100.0%20(Grade%20A%2B)-brightgreen.svg)](scripts/run_audit_scoring.py)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![AMEVA Foundation](https://img.shields.io/badge/AMEVA%20Foundation-Empowering%20Open%20Source-00f5d4.svg?logo=open-source-initiative&logoColor=white)](https://github.com/uno-km)
+[![Official Documentation](https://img.shields.io/badge/docs-uno--km.vercel.app%2Flib%2Ftrain-004499?style=for-the-badge&logo=vercel)](https://uno-km.vercel.app/lib/train/)
+[![PyPI - Version](https://img.shields.io/pypi/v/termux-train.svg?color=0066cc&logo=pypi&logoColor=white&style=for-the-badge)](https://pypi.org/project/termux-train/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/termux-train.svg?logo=python&logoColor=white&style=for-the-badge)](https://pypi.org/project/termux-train/)
+[![Audit Scorecard](https://img.shields.io/badge/Audit%20Scorecard-100.0%20%2F%20100.0%20(Grade%20A%2B)-brightgreen.svg?style=for-the-badge)](https://uno-km.vercel.app/lib/train/benchmarks.html)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](LICENSE)
+[![AMEVA Foundation](https://img.shields.io/badge/Foundation-AOSF_Tier_1-orange?style=for-the-badge)](https://uno-km.vercel.app/docs/foundation/)
+
+### Ultra-lightweight On-Device Tensor & DAG Autograd Deep Learning Framework
+**An Official Tier 1 Top-Level Open-Source Project of the AMEVA Foundation (AOSF)**
+
+[📚 Official Documentation](https://uno-km.vercel.app/lib/train/) • [📦 PyPI Package](https://pypi.org/project/termux-train/) • [💬 Issue Tracker](https://github.com/uno-km/termux-train/issues)
 
 </div>
 
@@ -19,20 +22,20 @@
 
 ## 🏛️ Engineered by AMEVA Foundation (아메바 재단)
 
-`termux-train`은 **AMEVA Foundation(아메바 재단)**의 오픈소스 이니셔티브 하에 개발되었습니다.  
+`termux-train`은 **AMEVA Open-Source Foundation(AOSF)**의 공식 1등급(Tier 1 TLP) 오픈소스 프로젝트입니다.  
 AMEVA Foundation은 **빅테크의 클라우드 종속과 고비용 GPU 독점을 타파**하고, 전 세계 누구나 주머니 속 스마트폰(Android Termux)과 엣지 디바이스에서 **100% 무료로 AI를 학습·미세조정(LoRA)·추론**할 수 있는 온디바이스 AI 주권 기술을 연구·보급합니다.
 
 ### 🌐 AMEVA On-Device Open-Source Ecosystem
-- 🎨 **[Termux-Diffusion](https://github.com/uno-km/termux-diffusion)**: Android Termux 네이티브 온디바이스 AI 이미지 생성 엔진
-- 🎭 **[Termux-Playwright](https://github.com/uno-km/termux-playwright-demo)**: 모바일 온디바이스 헤드리스 브라우저 자동화
-- 🎙️ **[Termux-STT](https://github.com/uno-km/termux-stt)**: 스마트폰 전용 로컬 음성인식 엔진
-- ⚡ **[AMEVA-Forge](https://github.com/uno-km/ameva-forge)**: 웹 표준 차세대 WebGPU 딥러닝 런타임
-- 📄 **[AMEVA-Doc-AI](https://github.com/uno-km/AMEVA-Doc-AI)**: 온디바이스 영수증·문서 정보 추출 엔진
+- 🎨 **[Termux-Diffusion](https://uno-km.vercel.app/lib/diffusion/)**: Android Termux 네이티브 온디바이스 AI 이미지 생성 엔진
+- 🎭 **[Termux-Playwright](https://uno-km.vercel.app/lib/playwright/)**: 모바일 온디바이스 헤드리스 브라우저 자동화
+- 🎙️ **[Termux-STT](https://uno-km.vercel.app/lib/stt/)**: 스마트폰 전용 로컬 음성인식 엔진
+- ⚡ **[AMEVA-Forge](https://uno-km.vercel.app/lib/forge/)**: 웹 표준 차세대 WebGPU 딥러닝 런타임
+- 💻 **[AMEVA Workstation](https://ameva-workstation-web-core.vercel.app/)**: 100% 온디바이스 로컬 AI & 문서 편집기
 
 ---
 
 ## 🌐 Official Documentation & Live Manual
-- 📖 **Official GitHub Pages**: [https://uno-km.github.io/termux-train/](https://uno-km.github.io/termux-train/) *(6개 국어 다국어 지원)*
+- 📖 **Official Documentation**: [https://uno-km.vercel.app/lib/train/](https://uno-km.vercel.app/lib/train/) *(13개 국어 다국어 지원)*
 - 📚 **On-Device Tiny Model & Small LLM Training Manual**: [docs/tiny_model_training_guide.md](docs/tiny_model_training_guide.md)
 - 📦 **Official PyPI Package**: [https://pypi.org/project/termux-train/](https://pypi.org/project/termux-train/)
 
@@ -178,7 +181,7 @@ checkpoint.load_lora_adapter(student, "lora_adapter.safetensors")
 
 `termux-train` is rigorously verified by a **0-Point Baseline Granular Scoring Protocol** that evaluates 5 core pillars of production integrity:
 
-```
+```text
 ======================================================================
   🛡️  [termux-train] Production Granular Audit Scoring System
   ⭐ Baseline: 0.0 Points | Target: 100.0 Points
@@ -197,7 +200,7 @@ checkpoint.load_lora_adapter(student, "lora_adapter.safetensors")
 
 ## 🏗️ Architecture Layout
 
-```
+```text
 termux-train/
 ├── termux_train/
 │   ├── __init__.py           # Top-level exports (Tensor, nn, optim, runtime, checkpoint, data)
@@ -212,7 +215,7 @@ termux-train/
 │   ├── tokenization/         # Pure-Python Lightweight Tokenizers (Base, Char, Byte, Word)
 │   └── utils/                # Termux Environment Diagnostics, Numerical Gradcheck
 ├── .github/workflows/        # Multi-Platform CI & GitHub Pages Deployment
-├── docs/                     # Official 6-Language GitHub Pages Documentation Website
+├── docs/                     # Official Documentation Website
 ├── examples/                 # 9 Canonical Demos (01_tensor_basics.py ~ 09_tiny_whisper_lora.py)
 ├── scripts/                  # 0-point audit scoring runner, source code exporter
 └── tests/                    # 649 unit, integration, mobile, and scorecard test suites
