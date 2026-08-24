@@ -128,7 +128,7 @@ Implemented & Hardened:
 - `LoRALinear.load_adapter_state_dict(state_dict, strict=True)`
 - `adapter_state_dict(module)`
 - `load_adapter_state_dict(module, state_dict, strict=True)`
-- Validation-atomic & commit-failure-atomic rollback guarantees
+- Validation-atomic & commit-failure-atomic rollback maintains
 - Single-layer pre-commit native snapshot and exception rollback
 - Recursive multi-layer pre-commit snapshot and exception rollback
 - Strict metadata bool, type, finite, and value checking (`in_features`, `out_features`, `rank`, `alpha`)

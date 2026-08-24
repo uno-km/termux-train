@@ -1,4 +1,5 @@
-# 📱 termux-train (AMEVA-Termux)
+# termux-train (AMEVA-Termux)
+
 > **Native On-Device Deep Learning & LoRA Training Framework for Android Termux**  
 > *Zero PyTorch Dependency · Pure Python Autograd Core · Pluggable NumPy Acceleration · Mobile-Resilient Runtime · On-Device LoRA · SafeTensors · RoPE Transformer*
 
@@ -16,155 +17,88 @@
 ### Ultra-lightweight On-Device Tensor & DAG Autograd Deep Learning Framework
 **An Official Tier 1 Top-Level Open-Source Project of the AMEVA Foundation (AOSF)**
 
-[📚 Official Documentation](https://uno-km.vercel.app/lib/train/) • [📦 PyPI Package](https://pypi.org/project/termux-train/) • [💬 Issue Tracker](https://github.com/uno-km/termux-train/issues)
+[Official Documentation](https://uno-km.vercel.app/lib/train/) • [PyPI Package](https://pypi.org/project/termux-train/) • [Issue Tracker](https://github.com/uno-km/termux-train/issues)
 
 </div>
 
 ---
 
-## 🏛️ Engineered by AMEVA Foundation (아메바 재단)
+## Engineered by AMEVA Open-Source Foundation (AOSF)
 
-`termux-train`은 **AMEVA Open-Source Foundation(AOSF)**의 공식 1등급(Tier 1 TLP) 오픈소스 프로젝트입니다.  
-AMEVA Foundation은 **빅테크의 클라우드 종속과 고비용 GPU 독점을 타파**하고, 전 세계 누구나 주머니 속 스마트폰(Android Termux)과 엣지 디바이스에서 **100% 무료로 AI를 학습·미세조정(LoRA)·추론**할 수 있는 온디바이스 AI 주권 기술을 연구·보급합니다.
+`termux-train` is an official Tier 1 Top-Level Project (TLP) of the **AMEVA Open-Source Foundation (AOSF)**.  
+The AMEVA Foundation democratizes AI research by eliminating cloud egress lock-in and high-cost GPU monopolies, empowering developers worldwide to **train, fine-tune (LoRA), and evaluate neural networks directly on everyday smartphones (Android Termux) and ARM64 edge hardware 100% locally**.
 
-### 🌐 AMEVA On-Device Open-Source Ecosystem
-- 🎨 **[Termux-Diffusion](https://uno-km.vercel.app/lib/diffusion/)**: Android Termux 네이티브 온디바이스 AI 이미지 생성 엔진
-- 🎭 **[Termux-Playwright](https://uno-km.vercel.app/lib/playwright/)**: 모바일 온디바이스 헤드리스 브라우저 자동화
-- 🎙️ **[Termux-STT](https://uno-km.vercel.app/lib/stt/)**: 스마트폰 전용 로컬 음성인식 엔진
-- ⚡ **[AMEVA-Forge](https://uno-km.vercel.app/lib/forge/)**: 웹 표준 차세대 WebGPU 딥러닝 런타임
-- 💻 **[AMEVA Workstation](https://ameva-workstation-web-core.vercel.app/)**: 100% 온디바이스 로컬 AI & 문서 편집기
-
----
-
-## 🌐 Official Documentation & Live Manual
-- 📖 **Official Documentation**: [https://uno-km.vercel.app/lib/train/](https://uno-km.vercel.app/lib/train/) *(13개 국어 다국어 지원)*
-- 📚 **On-Device Tiny Model & Small LLM Training Manual**: [docs/tiny_model_training_guide.md](docs/tiny_model_training_guide.md)
-- 📦 **Official PyPI Package**: [https://pypi.org/project/termux-train/](https://pypi.org/project/termux-train/)
+### AMEVA On-Device Open-Source Ecosystem
+- **[Termux-BitNet](https://github.com/uno-km/termux-bitnet)**: Ultra-low power 1.58-bit LLM on-device inference engine with ARM64 DotProd SIMD.
+- **[Termux-Diffusion](https://uno-km.vercel.app/lib/diffusion/)**: Android Termux native on-device AI image generation engine.
+- **[Termux-Playwright](https://uno-km.vercel.app/lib/playwright/)**: Non-root mobile headless Chromium browser automation.
+- **[Termux-STT](https://uno-km.vercel.app/lib/stt/)**: Integrated on-device speech-to-text and 128d speaker diarization.
+- **[AMEVA-Forge](https://uno-km.vercel.app/lib/forge/)**: Browser-native WebGPU deep learning tensor engine.
+- **[AMEVA Workstation](https://ameva-workstation-web-core.vercel.app/)**: 100% client-side local AI and document intelligence.
 
 ---
 
-## 💡 What is termux-train?
+## What is termux-train?
 
 `termux-train` (also known as `AMEVA-Termux`) is a lightweight, self-contained deep learning and automatic differentiation (Autograd) training engine built specifically for **Android Termux native environments** and resource-constrained edge devices.
 
 While standard mobile ML frameworks (TFLite, ONNX Runtime Mobile, ExecuTorch, NCNN) only support **inference**, `termux-train` enables **full on-device training, backpropagation, RoPE Transformers, and LoRA fine-tuning** directly on smartphone hardware without requiring heavy PyTorch binaries or PRoot container virtualization.
 
-> ⚠️ **Disclaimer**: `termux-train` is an independent project engineered by the AMEVA team. It is not affiliated with, endorsed by, or sponsored by PyTorch, Meta, or the Termux project.
+> **Disclaimer**: `termux-train` is an independent project engineered by the AMEVA team. It is not affiliated with, endorsed by, or sponsored by PyTorch, Meta, or the Termux project.
 
 ---
 
-## 🚀 5-Minute Quickstart
+## 5-Minute Quickstart
 
 ### 1. Installation via PyPI
 
 ```bash
-# A. In Android Termux (Native with OpenBLAS C-Acceleration):
+# In Android Termux:
 pkg update && pkg install python python-numpy git
 pip install termux-train
-
-# B. Standard Linux / macOS / Windows:
-pip install termux-train[accelerated]
 ```
 
-### 2. CLI Diagnostics & Self-Test
+### 2. End-to-End On-Device Training (Python SDK)
 
-```bash
-# Check device hardware, RAM, and backend capabilities:
-termux-train info
+```python
+import termux_train as tt
+import termux_train.nn as nn
+import termux_train.optim as optim
 
-# Run mathematical self-test across all backends:
-termux-train check
+# 1. Define Model Architecture
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(4, 16)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(16, 1)
 
-# Run 0-point baseline granular audit scorecard:
-termux-train score
+    def forward(self, x):
+        return self.fc2(self.relu(self.fc1(x)))
 
-# Run any canonical demo (1 through 9):
-termux-train demo 9  # Tiny Whisper Speech-to-Text LoRA Fine-Tuning
+model = MLP()
+criterion = nn.MSELoss()
+optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+
+# 2. Synthetic Data
+x_train = tt.randn(32, 4)
+y_train = tt.randn(32, 1)
+
+# 3. Training Loop with Autograd
+for epoch in range(10):
+    optimizer.zero_grad()
+    predictions = model(x_train)
+    loss = criterion(predictions, y_train)
+    loss.backward()
+    optimizer.step()
+    print(f"Epoch {epoch+1:02d} | Loss: {loss.item():.6f}")
 ```
 
 ---
 
-## 🧠 Core Features & Modern Architecture
+## License
 
-| Feature | Description | Mobile Benefit |
-| :--- | :--- | :--- |
-| **Pure Python Autograd** | Zero-dependency dynamic computation graph with reverse-mode DAG | Runs everywhere, no compilation required |
-| **NumPy Tier-2 Engine** | C-vectorized BLAS acceleration for Matmul, CrossEntropy, Softmax | $10\times \sim 100\times$ faster on ARM CPUs |
-| **Native RoPE** | Rotary Position Embedding with $O(0)$ learnable parameters | Infinite context extrapolation without memory bloat |
-| **On-Device LoRA** | Parameter-efficient fine-tuning ($A \times B$ low-rank decomposition) | Fine-tune models with $99.9\%$ smaller adapter files (<100KB) |
-| **SafeTensors Binary** | HuggingFace-compatible zero-copy serialization format | $5\times \sim 10\times$ faster checkpoints, eliminates LMK crash |
-| **INT8 Quantization** | Symmetric AbsMax dynamic weight quantization | Zero-allocation matrix scaling, $75\%$ RAM reduction |
-| **MMap Streaming** | Streaming token sequence dataset directly from disk via `mmap` | Train on datasets larger than physical mobile RAM |
-
----
-
-## ⚡ 10-Line Code Examples
-
-### A. Autograd & Tensor Math
-
-```python
-from termux_train import Tensor, set_backend
-
-# Pluggable backend (auto / numpy / python)
-set_backend("auto")
-
-x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
-w = Tensor([[2.0], [1.0]], requires_grad=True)
-
-y = x @ w
-loss = (y * y).mean()
-loss.backward()
-
-print("x.grad:\n", x.grad)
-print("w.grad:\n", w.grad)
-```
-
-### B. Tiny Transformer LM with RoPE & KV Caching
-
-```python
-from termux_train import Tensor, nn
-
-# Modern Decoder-Only Transformer with Native RoPE
-model = nn.TinyTransformerLM(
-    vocab_size=100,
-    d_model=32,
-    num_heads=4,
-    d_ff=64,
-    num_layers=2,
-    pos_type="rope",       # O(0) positional embedding parameters
-    tie_weights=True       # Shares token embeddings with LM head
-)
-
-# Fast autoregressive generation with incremental KV cache
-prompt = [1, 5, 12]
-generated = model.generate(prompt, max_new_tokens=20, temperature=0.7, top_p=0.9)
-print("Generated Tokens:", generated)
-```
-
-### C. Lightweight LoRA Adapter Serialization (<100KB)
-
-```python
-from termux_train import nn, checkpoint
-
-# 1. Base Model & LoRA Injection
-base = nn.Sequential(nn.Linear(32, 64), nn.ReLU(), nn.Linear(64, 10))
-student = nn.Sequential(
-    nn.LoRALinear.from_linear(base[0], rank=4, alpha=8.0),
-    nn.ReLU(),
-    nn.LoRALinear.from_linear(base[2], rank=4, alpha=8.0),
-)
-
-# 2. Save ONLY the adapter weights in SafeTensors format (<100KB)
-checkpoint.save_lora_adapter(student, "lora_adapter.safetensors", adapter_name="my_lora_v1")
-
-# 3. Load adapter into fresh model in another session
-checkpoint.load_lora_adapter(student, "lora_adapter.safetensors")
-```
-
----
-
-## 📊 Canonical Examples Suite (`examples/`)
-
+<<<<<<< Updated upstream
 | File | Demo Name | Description |
 | :--- | :--- | :--- |
 | `01_tensor_basics.py` | **Tensor Basics** | Tensor creation, shapes, dtypes, elementwise math |
@@ -248,3 +182,6 @@ AMEVA is an independent open-source public good governed under the **AMEVA Open-
 - **Open Collective (Non-Profit 501(c)(6))**: [https://opencollective.com/ameva-fund](https://opencollective.com/ameva-fund)
 - **GitHub Sponsors**: [https://github.com/sponsors/uno-km](https://github.com/sponsors/uno-km)
 - **Official Foundation Portal**: [https://uno-km.vercel.app/docs/foundation/sponsorship.html](https://uno-km.vercel.app/docs/foundation/sponsorship.html)
+=======
+Apache License 2.0. Copyright (c) 2026 uno-km (AMEVA Foundation).
+>>>>>>> Stashed changes

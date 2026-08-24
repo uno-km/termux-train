@@ -34,6 +34,6 @@
 
 ## 🔒 3. 설계 효과
 
-- **보안/권한 격리**: 안드로이드 특수 권한(`READ_PRIVILEGED_PHONE_STATE`, `BATTERY_STATS` 등)이나 Termux:API 의존성이 전혀 없는 **100% 독립적인 순수 파이썬/NumPy 라이브러리**로 유지됩니다.
-- **플랫폼 독립성**: Linux, macOS, Windows, Android Termux 어디서나 동일한 동작을 보장합니다.
+- **보안/권한 격리**: 안드로이드 특수 권한(`READ_PRIVILEGED_PHONE_STATE`, `BATTERY_STATS` 등)이나 Termux:API 의존성이 전혀 없는 **독립적인 순수 파이썬/NumPy 라이브러리**로 유지됩니다.
+- **플랫폼 독립성**: Linux, macOS, Windows, Android Termux 어디서나 동일한 동작을 설계되었습니다.
 - **코드 경량성 (Zero-Bloatware)**: 불필요한 시스템 감시 백그라운드 스레드 및 I/O 오버헤드가 발생하지 않습니다.

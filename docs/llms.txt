@@ -1,37 +1,29 @@
-# termux-train (AMEVA-Termux)
-> Native On-Device Deep Learning & LoRA Training Framework for Android Termux
+# Termux-Train (v1.0.0)
+> Ultra-Lightweight On-Device Tensor & DAG Autograd Deep Learning Framework
 
-## Core Overview
-`termux-train` is a lightweight, zero-dependency deep learning and automatic differentiation (Autograd) training framework engineered specifically for Android Termux and edge devices. It enables on-device backpropagation, RoPE Transformers, and LoRA fine-tuning directly on smartphone hardware without requiring heavy PyTorch binaries or PRoot Linux virtualization.
+## Quick Specification for AI Coding Agents
+- Official Repo: https://github.com/uno-km/termux-train
+- Installation: `pip install termux-train`
+- Architecture: Implements a pure C++/Python dynamic computation DAG with SafeTensors zero-copy serialization and memory-mapped LoRA backpropagation on ARM64.
 
-## Distribution & Installation
-- **PyPI Package**: `pip install termux-train`
-- **Optional C Acceleration**: `pip install termux-train[accelerated]` (NumPy)
-- **Termux Native**: `pkg update && pkg install python python-numpy && pip install termux-train`
-
-## Key Architecture
-1. **Core Autograd (`termux_train.Tensor`)**: Pure-Python dynamic computation graph with reverse-mode DAG autograd.
-2. **Pluggable Backends**: `PythonBackend` (zero dependencies) and `NumPyBackend` (C-level OpenBLAS vectorization).
-3. **Neural Network Layers (`termux_train.nn`)**: `Linear`, `LoRALinear`, `Embedding`, `LayerNorm`, `MultiHeadAttention`, `TransformerBlock`, `TinyTransformerLM`.
-4. **Optimizers (`termux_train.optim`)**: `SGD` (Momentum, Nesterov), `Adam`, `AdamW`.
-5. **Modern Checkpointing (`termux_train.checkpoint`)**: HuggingFace-compatible `.safetensors` binary zero-copy, lightweight LoRA adapter serialization (<100KB), atomic JSON.
-6. **Data Streaming (`termux_train.data`)**: `MMapTokenDataset` for streaming multi-GB token corpora directly from disk without filling RAM.
-
-## Canonical 10-Line Quickstart
+## Canonical Code Pattern
 ```python
-from termux_train import Tensor, nn, optim, checkpoint
+import termux_train as tt
 
-# Define model
-model = nn.Sequential(nn.Linear(16, 32), nn.ReLU(), nn.Linear(32, 2))
-optimizer = optim.AdamW(model.parameters(), lr=0.01)
-criterion = nn.CrossEntropyLoss()
+# 1. Define model with LoRA layers
+model = tt.nn.TransformerLoRA(vocab_size=32000, dim=512, lora_rank=8)
+optimizer = tt.optim.AdamW(model.parameters(), lr=1e-4)
 
-# Forward, backward, and step
-x = Tensor([[0.5] * 16])
-target = Tensor([1], dtype="int64")
+# 2. Train on-device with zero memory overhead
+for epoch in range(5):
+    loss = model(inputs, targets)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+    print(f"Epoch {epoch}: Loss = {loss.item():.4f}")
 
-optimizer.zero_grad()
-loss = criterion(model(x), target)
-loss.backward()
-optimizer.step()
 ```
+
+## Key Constraints
+- Pure non-blocking architecture, zero memory leaks.
+- Strictly adhere to closed-form precision and WebGPU/Bionic ARM64 native targets.

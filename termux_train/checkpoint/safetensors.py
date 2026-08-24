@@ -176,13 +176,23 @@ def load_safetensors(
         data_start_offset = 8 + header_len
         metadata = header.pop("__metadata__", {})
 
+        file_size = os.path.getsize(filepath)
         tensors: Dict[str, Tensor] = {}
         for name, info in header.items():
             dtype_str = SAFETENSORS_TO_DTYPE.get(info["dtype"], "float32")
             shape = tuple(info["shape"])
             start_off, end_off = info["data_offsets"]
+            if not (0 <= start_off <= end_off):
+                raise ValueError(f"Corrupted or negative data_offsets for '{name}': [{start_off}, {end_off}]")
+            if data_start_offset + end_off > file_size:
+                raise ValueError(
+                    f"Data offset for tensor '{name}' exceeds file boundary: "
+                    f"{data_start_offset + end_off} > {file_size}"
+                )
             f.seek(data_start_offset + start_off)
             raw_bytes = f.read(end_off - start_off)
+            if len(raw_bytes) != (end_off - start_off):
+                raise IOError(f"Truncated safetensors stream for tensor '{name}'")
 
             data = _raw_bytes_to_tensor_data(raw_bytes, shape, dtype_str, backend=b)
             tensors[name] = Tensor(data, dtype=dtype_str, backend=b)

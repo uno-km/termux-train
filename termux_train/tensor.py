@@ -18,11 +18,15 @@ VALID_DTYPES = {"float32", "int64", "bool"}
 
 _GRAD_ENABLED_VAR: ContextVar[bool] = ContextVar("termux_train_grad_enabled", default=True)
 
-def _promote_dtype(dt1: str, dt2: str) -> str:
-    """Explicit type promotion rule matrix."""
+def _promote_dtype(dt1: str, dt2: str, op: str = "+") -> str:
+    """Explicit type promotion rule matrix conforming to standard algebraic rings."""
+    if dt1 not in VALID_DTYPES or dt2 not in VALID_DTYPES:
+        raise TypeError(f"Invalid dtypes for promotion: {dt1}, {dt2}")
     if dt1 == "float32" or dt2 == "float32":
         return "float32"
     if dt1 == "int64" or dt2 == "int64":
+        return "int64"
+    if op in ("+", "-", "*", "@", "/"):
         return "int64"
     return "bool"
 
@@ -73,7 +77,7 @@ def _infer_dtype_from_data(data: Any) -> str:
     return "float32"
 
 def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Tensor':
-    """Sum out broadcast dimensions to match target_shape using multi-axis reduction."""
+    """Sum out broadcast dimensions to match target_shape using exact multi-axis reduction without offset drift."""
     current_shape = grad_tensor.shape
     if current_shape == target_shape:
         return grad_tensor
@@ -82,16 +86,22 @@ def _unbroadcast_to(grad_tensor: 'Tensor', target_shape: Tuple[int, ...]) -> 'Te
     tgt_ndim = len(target_shape)
     pad = cur_ndim - tgt_ndim
 
+    if pad < 0:
+        raise ValueError(f"Cannot unbroadcast grad of shape {current_shape} to larger shape {target_shape}")
+
+    padded_tgt_shape = (1,) * pad + target_shape
+    axes_to_sum = []
+    for i, (cur_dim, tgt_dim) in enumerate(zip(current_shape, padded_tgt_shape)):
+        if tgt_dim == 1 and cur_dim > 1:
+            axes_to_sum.append(i)
+        elif tgt_dim != cur_dim:
+            raise ValueError(f"Cannot unbroadcast shape {current_shape} to {target_shape}")
+
     out = grad_tensor
-    if pad > 0:
-        lead_axes = tuple(range(pad))
-        out = out.sum(axis=lead_axes, keepdims=False)
-
-    if tgt_ndim > 0:
-        trail_axes = tuple(i for i in range(tgt_ndim) if target_shape[i] == 1 and out.shape[i] > 1)
-        if trail_axes:
-            out = out.sum(axis=trail_axes, keepdims=True)
-
+    if axes_to_sum:
+        out = out.sum(axis=tuple(axes_to_sum), keepdims=True)
+    if out.shape != target_shape:
+        out = out.reshape(target_shape)
     return out
 
 def _attach_grad_fn(out: 'Tensor', parents: Tuple['Tensor', ...], backward_fn: Optional[Callable[[], None]]) -> None:
@@ -199,11 +209,19 @@ class Tensor:
         _GRAD_ENABLED_VAR.set(bool(mode))
 
     def _replace_data(self, value: Any, *, bump_version: bool = True) -> None:
-        """Atomic internal data replacement with monotonic version increment."""
+        """Atomic internal data replacement with shape/dtype invariance and monotonic version increment."""
         if isinstance(value, Tensor):
-            self._data = self.backend.from_data(value.tolist(), dtype=self.dtype)
+            new_data = self.backend.from_data(value.tolist(), dtype=self.dtype)
         else:
-            self._data = self.backend.from_data(value, dtype=self.dtype)
+            new_data = self.backend.from_data(value, dtype=self.dtype)
+
+        new_shape = self.backend.get_shape(new_data)
+        if hasattr(self, '_data') and self._data is not None:
+            if new_shape != self.shape:
+                raise ValueError(
+                    f"Cannot replace tensor data with mismatched shape: expected {self.shape}, got {new_shape}"
+                )
+        self._data = new_data
         if bump_version:
             self._version_counter.bump()
 
@@ -430,8 +448,10 @@ class Tensor:
 
     def __add__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        out_dtype = _promote_dtype(self.dtype, other.dtype)
-        out_data = self.backend.add(self._data, other._data)
+        out_dtype = _promote_dtype(self.dtype, other.dtype, op="+")
+        d1 = self._data if self.dtype == out_dtype else self.backend.from_data(self.tolist(), dtype=out_dtype)
+        d2 = other._data if other.dtype == out_dtype else other.backend.from_data(other.tolist(), dtype=out_dtype)
+        out_data = self.backend.add(d1, d2)
         out = Tensor(
             out_data,
             dtype=out_dtype,
@@ -469,8 +489,10 @@ class Tensor:
 
     def __sub__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        out_dtype = _promote_dtype(self.dtype, other.dtype)
-        out_data = self.backend.sub(self._data, other._data)
+        out_dtype = _promote_dtype(self.dtype, other.dtype, op="-")
+        d1 = self._data if self.dtype == out_dtype else self.backend.from_data(self.tolist(), dtype=out_dtype)
+        d2 = other._data if other.dtype == out_dtype else other.backend.from_data(other.tolist(), dtype=out_dtype)
+        out_data = self.backend.sub(d1, d2)
         out = Tensor(
             out_data,
             dtype=out_dtype,
@@ -510,8 +532,10 @@ class Tensor:
 
     def __mul__(self, other: Any) -> 'Tensor':
         other = self._ensure_tensor_on_self_backend(other)
-        out_dtype = _promote_dtype(self.dtype, other.dtype)
-        out_data = self.backend.mul(self._data, other._data)
+        out_dtype = _promote_dtype(self.dtype, other.dtype, op="*")
+        d1 = self._data if self.dtype == out_dtype else self.backend.from_data(self.tolist(), dtype=out_dtype)
+        d2 = other._data if other.dtype == out_dtype else other.backend.from_data(other.tolist(), dtype=out_dtype)
+        out_data = self.backend.mul(d1, d2)
         out = Tensor(
             out_data,
             dtype=out_dtype,
@@ -677,62 +701,62 @@ class Tensor:
                     raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
                 if out.grad is None:
                     return
+                with no_grad():
+                    if r1 == 1 and r2 == 1:
+                        grad_data = out.grad._data
+                        if self.requires_grad:
+                            d_self = self.backend.mul(grad_data, other._data)
+                            self._accumulate_grad_data(d_self)
+                        if other.requires_grad:
+                            d_other = self.backend.mul(grad_data, self._data)
+                            other._accumulate_grad_data(d_other)
+                        return
 
-                if r1 == 1 and r2 == 1:
-                    grad_data = out.grad._data
-                    if self.requires_grad:
-                        d_self = self.backend.mul(grad_data, other._data)
-                        self._accumulate_grad_data(d_self)
-                    if other.requires_grad:
-                        d_other = self.backend.mul(grad_data, self._data)
-                        other._accumulate_grad_data(d_other)
-                    return
+                    G = out.grad
+                    A = self
+                    B = other
 
-                G = out.grad
-                A = self
-                B = other
-
-                if r1 == 1:
-                    A_prom = A.reshape(1, s1[0])
-                    G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
-                else:
-                    A_prom = A
-                    G_prom = G
-
-                if r2 == 1:
-                    B_prom = B.reshape(s2[0], 1)
-                    if r1 > 1:
-                        G_prom = G.reshape(*G.shape, 1)
-                else:
-                    B_prom = B
-
-                b_ndim = B_prom.ndim
-                b_axes = list(range(b_ndim))
-                b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
-                B_prom_T = B_prom.transpose(*b_axes)
-
-                a_ndim = A_prom.ndim
-                a_axes = list(range(a_ndim))
-                a_axes[-2], a_axes[-1] = a_axes[-1], a_axes[-2]
-                A_prom_T = A_prom.transpose(*a_axes)
-
-                if self.requires_grad:
-                    dA_prom = G_prom @ B_prom_T
-                    dA_unbroadcast = _unbroadcast_to(dA_prom, A_prom.shape)
                     if r1 == 1:
-                        dA_final = dA_unbroadcast.reshape(s1[0])
+                        A_prom = A.reshape(1, s1[0])
+                        G_prom = G.reshape(*G.shape[:-1], 1, G.shape[-1])
                     else:
-                        dA_final = dA_unbroadcast
-                    self._accumulate_grad_data(dA_final._data)
+                        A_prom = A
+                        G_prom = G
 
-                if other.requires_grad:
-                    dB_prom = A_prom_T @ G_prom
-                    dB_unbroadcast = _unbroadcast_to(dB_prom, B_prom.shape)
                     if r2 == 1:
-                        dB_final = dB_unbroadcast.reshape(s2[0])
+                        B_prom = B.reshape(s2[0], 1)
+                        if r1 > 1:
+                            G_prom = G.reshape(*G.shape, 1)
                     else:
-                        dB_final = dB_unbroadcast
-                    other._accumulate_grad_data(dB_final._data)
+                        B_prom = B
+
+                    b_ndim = B_prom.ndim
+                    b_axes = list(range(b_ndim))
+                    b_axes[-2], b_axes[-1] = b_axes[-1], b_axes[-2]
+                    B_prom_T = B_prom.transpose(*b_axes)
+
+                    a_ndim = A_prom.ndim
+                    a_axes = list(range(a_ndim))
+                    a_axes[-2], a_axes[-1] = a_axes[-1], a_axes[-2]
+                    A_prom_T = A_prom.transpose(*a_axes)
+
+                    if self.requires_grad:
+                        dA_prom = G_prom @ B_prom_T
+                        dA_unbroadcast = _unbroadcast_to(dA_prom, A_prom.shape)
+                        if r1 == 1:
+                            dA_final = dA_unbroadcast.reshape(s1[0])
+                        else:
+                            dA_final = dA_unbroadcast
+                        self._accumulate_grad_data(dA_final._data)
+
+                    if other.requires_grad:
+                        dB_prom = A_prom_T @ G_prom
+                        dB_unbroadcast = _unbroadcast_to(dB_prom, B_prom.shape)
+                        if r2 == 1:
+                            dB_final = dB_unbroadcast.reshape(s2[0])
+                        else:
+                            dB_final = dB_unbroadcast
+                        other._accumulate_grad_data(dB_final._data)
 
             _attach_grad_fn(out, (self, other), _backward)
         return out
@@ -1032,52 +1056,21 @@ class Tensor:
         return self.clamp(min_val=min_val, max_val=max_val)
 
     # =========================================================================
-    # Transformer Math Primitives
+    # Transformer Math Primitives (Vectorized & Zero-Python-Heap-Explosion)
     # =========================================================================
 
     def logsumexp(self, axis: int = -1, keepdims: bool = False) -> 'Tensor':
         """
         Numerically stable Log-Sum-Exp: logsumexp(x) = m + log(sum(exp(x - m)))
-        Safely handles all-negative-infinity rows without producing NaN.
+        Zero Python-list allocations; preserves vectorization and defends against -inf.
         """
         m = self.max(axis=axis, keepdims=True).detach()
-        backend = self.backend
-        flat_m = backend.to_flat_list(m._data)
-        has_neginf = any(math.isinf(v) and v < 0 for v in flat_m)
-
-        if has_neginf:
-            safe_m_flat = [0.0 if (math.isinf(v) and v < 0) else v for v in flat_m]
-            safe_m_data = backend.from_data(backend.reshape(safe_m_flat, m.shape), dtype="float32")
-            safe_m = Tensor(safe_m_data, dtype="float32", backend=backend)
-            shifted = self - safe_m
-            exp_shifted = shifted.exp()
-            sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
-            log_sum = sum_exp.log()
-            out = safe_m + log_sum
-
-            flat_out = backend.to_flat_list(out._data)
-            final_flat = [-float('inf') if (math.isinf(orig_m) and orig_m < 0) else v
-                          for v, orig_m in zip(flat_out, flat_m)]
-            final_data = backend.from_data(backend.reshape(final_flat, out.shape), dtype="float32")
-            out = Tensor(final_data, dtype="float32", requires_grad=self.requires_grad, _prev=(self,), _op="logsumexp", backend=backend)
-            if out.requires_grad:
-                def _backward():
-                    if out.grad is not None:
-                        lse_b = backend.mul(backend.ones(self.shape), out._data)
-                        flat_lse = backend.to_flat_list(lse_b)
-                        flat_x = backend.to_flat_list(self._data)
-                        flat_g = backend.to_flat_list(out.grad._data)
-                        d_flat = [0.0 if (math.isinf(lv) and lv < 0) else g * math.exp(x - lv)
-                                  for g, x, lv in zip(flat_g, flat_x, flat_lse)]
-                        d_self = backend.from_data(backend.reshape(d_flat, self.shape), dtype="float32")
-                        self._accumulate_grad_data(d_self)
-                _attach_grad_fn(out, (self,), _backward)
-        else:
-            shifted = self - m
-            exp_shifted = shifted.exp()
-            sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
-            log_sum = sum_exp.log()
-            out = m + log_sum
+        m_clamped = m.clamp(min_val=-1e20)
+        shifted = self - m_clamped
+        exp_shifted = shifted.exp()
+        sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
+        safe_sum = sum_exp + 1e-30
+        out = m + safe_sum.log()
 
         if not keepdims:
             ndim = self.ndim
@@ -1093,30 +1086,44 @@ class Tensor:
 
     def softmax(self, axis: int = -1) -> 'Tensor':
         """
-        Numerically stable Softmax: softmax(x) = exp(log_softmax(x)).
-        Guarantees 0.0 attention probability without NaN on all-masked rows.
+        Numerically stable Softmax: softmax(x) = exp(x - max(x)) / sum(exp(x - max(x))).
+        Guarantees exact 0.0 attention probability and zero gradient on all-masked rows without NaN.
         """
         m = self.max(axis=axis, keepdims=True).detach()
-        backend = self.backend
-        flat_m = backend.to_flat_list(m._data)
-        if any(math.isinf(v) and v < 0 for v in flat_m):
-            lse = self.logsumexp(axis=axis, keepdims=True)
-            lse_b = backend.mul(backend.ones(self.shape), lse._data)
-            flat_lse = backend.to_flat_list(lse_b)
-            flat_x = backend.to_flat_list(self._data)
-            res = [0.0 if (math.isinf(lv) and lv < 0) else math.exp(xv - lv)
-                   for xv, lv in zip(flat_x, flat_lse)]
-            out_data = backend.from_data(backend.reshape(res, self.shape), dtype="float32")
-            out = Tensor(out_data, dtype="float32", requires_grad=self.requires_grad, _prev=(self,), _op="softmax", backend=backend)
-            if out.requires_grad:
-                def _backward():
-                    if out.grad is not None:
-                        sum_gy = (out.grad * out).sum(axis=axis, keepdims=True)
-                        d_self = out * (out.grad - sum_gy)
-                        self._accumulate_grad_data(d_self._data)
-                _attach_grad_fn(out, (self,), _backward)
-            return out
-        return self.log_softmax(axis=axis).exp()
+        m_clamped = m.clamp(min_val=-1e20)
+        shifted = self - m_clamped
+        exp_shifted = shifted.exp()
+        sum_exp = exp_shifted.sum(axis=axis, keepdims=True)
+        safe_sum = sum_exp + 1e-12
+        out_data = self.backend.div(exp_shifted._data, safe_sum._data)
+        out = Tensor(
+            out_data,
+            dtype="float32",
+            requires_grad=self.requires_grad,
+            _prev=(self,),
+            _op="softmax",
+            backend=self.backend
+        )
+
+        if out.requires_grad:
+            backend = self.backend
+            saved_v = self._version
+            ndim = self.ndim
+            norm_axes = _normalize_axes(axis, ndim)
+
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None and self.requires_grad:
+                    with no_grad():
+                        gy = backend.mul(out.grad._data, out._data)
+                        sum_gy = backend.sum(gy, axis=norm_axes, keepdims=True)
+                        grad_minus_sum = backend.sub(out.grad._data, sum_gy)
+                        d_self = backend.mul(out._data, grad_minus_sum)
+                        self._accumulate_grad_data(d_self)
+
+            _attach_grad_fn(out, (self,), _backward)
+        return out
 
     # =========================================================================
     # Reverse Mode Autograd Entrypoint (In-Flight Memory Release on Backward)
@@ -1222,7 +1229,13 @@ class Tensor:
     # =========================================================================
 
     def __repr__(self) -> str:
-        data_str = str(self.tolist())
+        num_el = 1
+        for d in self.shape:
+            num_el *= d
+        if num_el > 64:
+            data_str = f"[... {num_el} elements ...]"
+        else:
+            data_str = str(self.tolist())
         dtype_str = f", dtype='{self.dtype}'" if self.dtype != "float32" else ""
         req_str = f", requires_grad=True" if self.requires_grad else ""
         op_str = f", op='{self._op}'" if self._op else ""

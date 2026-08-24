@@ -1,0 +1,64 @@
+# docs/doc.config.yaml
+name: "Termux-Train"
+package_name_pypi: "termux-train"
+package_name_npm: ""
+version: "v1.0.0"
+release_name: "Stable Release"
+license: "Apache-2.0"
+platform: "Android ARM64 / Termux Bionic"
+github_repo_url: "https://github.com/uno-km/termux-train"
+
+tagline_en: "Ultra-Lightweight On-Device Tensor & DAG Autograd Deep Learning Framework"
+tagline_ko: "SafeTensors 제로 카피 및 LoRA 파인튜닝 지원 경량 온디바이스 DAG Autograd 딥러닝 프레임워크"
+
+quick_install_cmd: "pip install termux-train"
+
+why_challenge_en: "Training or fine-tuning neural networks on mobile devices with standard deep learning toolchains causes Out-Of-Memory (OOM) crashes and excessive disk paging."
+why_challenge_ko: "표준 딥러닝 툴체인으로 모바일에서 모델을 학습하거나 파인튜닝하면 막대한 프레임워크 오버헤드로 인해 메모리 부족(OOM) 오류가 발생합니다."
+
+description_en: "Implements a pure C++/Python dynamic computation DAG with SafeTensors zero-copy serialization and memory-mapped LoRA backpropagation on ARM64."
+description_ko: "SafeTensors 제로 카피 직렬화와 메모리 맵 LoRA 역전파를 결합한 초경량 동적 계산 DAG 엔진으로 모바일 단말기 상에서 모델 파인튜닝을 실현합니다."
+
+features:
+  - title_en: "Zero-Copy SafeTensors Serialization"
+    title_ko: "SafeTensors 제로 카피 메모리 매핑"
+    desc_en: "Loads and saves model checkpoints with zero memory duplication via mmap."
+    desc_ko: "mmap 메모리 매핑을 통해 가중치 복사 없이 즉각 체크포인트를 로드하고 저장합니다."
+  - title_en: "Dynamic DAG Autograd Engine"
+    title_ko: "동적 계산 그래프(DAG) Autograd 엔진"
+    desc_en: "Closed-form gradient computation with minimal heap allocation during backward pass."
+    desc_ko: "역전파 수행 시 힙 할당을 최소화하여 닫힌 형태 수식으로 엄밀하게 그래디언트를 계산합니다."
+  - title_en: "On-Device LoRA Fine-Tuning"
+    title_ko: "온디바이스 LoRA 파인튜닝"
+    desc_en: "Optimized low-rank adaptation matrix training directly on mobile CPU/NEON cores."
+    desc_ko: "모바일 CPU 환경에서 저순위 어댑테이션(LoRA) 행렬을 직접 학습하고 가중치를 병합합니다."
+
+matrix_table:
+  - category: "Tensor Operations"
+    operations: "Dynamic DAG Autograd, SafeTensors IO, RoPE Positional Encoding"
+    status: "Production"
+  - category: "Optimizers"
+    operations: "AdamW, SGD with Momentum, Cosine Annealing LR Scheduler"
+    status: "Production"
+  - category: "Target Hardware"
+    operations: "ARM64 Bionic libc, NEON SIMD, Multi-Core OpenMP"
+    status: "Production"
+
+code_example_py: |
+  import termux_train as tt
+
+  # 1. Define model with LoRA layers
+  model = tt.nn.TransformerLoRA(vocab_size=32000, dim=512, lora_rank=8)
+  optimizer = tt.optim.AdamW(model.parameters(), lr=1e-4)
+
+  # 2. Train on-device with zero memory overhead
+  for epoch in range(5):
+      loss = model(inputs, targets)
+      loss.backward()
+      optimizer.step()
+      optimizer.zero_grad()
+      print(f"Epoch {epoch}: Loss = {loss.item():.4f}")
+
+code_example_js: |
+  // Termux-Train is primarily a Python native ML framework.
+  // Models can be exported to standard SafeTensors format for universal deployment.

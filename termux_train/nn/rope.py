@@ -82,6 +82,26 @@ class RotaryEmbedding(Module):
             self._np_cos = None
             self._np_sin = None
 
+    def _expand_tables(self, required_len: int) -> None:
+        """Dynamically expands cos and sin tables to support arbitrarily long contexts."""
+        current_len = len(self._cos_table)
+        target_len = max(current_len * 2, required_len)
+        for pos in range(current_len, target_len):
+            row_cos = []
+            row_sin = []
+            for freq in self.inv_freq:
+                angle = float(pos) * freq
+                c = math.cos(angle)
+                s = math.sin(angle)
+                row_cos.extend([c, c])
+                row_sin.extend([s, s])
+            self._cos_table.append(row_cos)
+            self._sin_table.append(row_sin)
+        self.max_seq_len = target_len
+        if HAS_NUMPY:
+            self._np_cos = np.array(self._cos_table, dtype=np.float32)
+            self._np_sin = np.array(self._sin_table, dtype=np.float32)
+
     def forward(
         self,
         x: Tensor,
@@ -99,10 +119,7 @@ class RotaryEmbedding(Module):
             raise ValueError(f"Input last dimension {head_dim} does not match RoPE dim {self.dim}")
 
         if position_offset + seq_len > self.max_seq_len:
-            raise ValueError(
-                f"Requested position range [{position_offset}, {position_offset + seq_len}) "
-                f"exceeds RoPE max_seq_len {self.max_seq_len}"
-            )
+            self._expand_tables(position_offset + seq_len)
 
         # NumPy Vectorized Fast Path
         if HAS_NUMPY and isinstance(x._data, np.ndarray) and getattr(backend, "name", "").lower() == "numpy":

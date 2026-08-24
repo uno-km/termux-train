@@ -1,7 +1,7 @@
 User-agent: *
 Allow: /
-Crawl-delay: 0
 
+# Allow all AI Crawlers
 User-agent: GPTBot
 Allow: /
 
@@ -11,14 +11,7 @@ Allow: /
 User-agent: PerplexityBot
 Allow: /
 
-User-agent: Google-Extended
+User-agent: AntigravityBot
 Allow: /
 
-User-agent: Bingbot
-Allow: /
-
-User-agent: Applebot
-Allow: /
-
-Sitemap: https://uno-km.github.io/termux-train/sitemap.xml
-Sitemap: https://uno-km.github.io/termux-train/sitemap-images.xml
+Sitemap: sitemap.xml

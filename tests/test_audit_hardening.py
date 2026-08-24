@@ -38,9 +38,9 @@ def test_explicit_dtype_promotion_arithmetic(backend_name):
     add_ib = t_i64 + t_bool
     assert add_ib.dtype == "int64"
 
-    # bool + bool -> bool
+    # bool + bool -> int64 (additive algebraic ring)
     add_bb = t_bool + t_bool
-    assert add_bb.dtype == "bool"
+    assert add_bb.dtype == "int64"
 
     # True division always produces float32
     div_ii = t_i64 / t_i64

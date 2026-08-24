@@ -84,15 +84,17 @@ def bce_loss(
         count = len(losses) if reduction == "mean" else 1.0
         def _backward():
             if out.grad is not None:
-                flat_g = backend.to_flat_list(out.grad._data) if reduction == "none" else [out.grad.item()] * len(losses)
-                if input.requires_grad:
-                    d_x = [(((p - t) / (p * (1.0 - p) + 1e-15)) / count) * g for p, t, g in zip(flat_p, flat_t, flat_g)]
-                    d_input = backend.from_data(backend.reshape(d_x, s_input), dtype="float32")
-                    input._accumulate_grad_data(d_input)
-                if target.requires_grad:
-                    d_y = [((math.log(1.0 - p) - math.log(p)) / count) * g for p, g in zip(flat_p, flat_g)]
-                    d_target = backend.from_data(backend.reshape(d_y, s_input), dtype="float32")
-                    target._accumulate_grad_data(d_target)
+                from ..tensor import no_grad
+                with no_grad():
+                    flat_g = backend.to_flat_list(out.grad._data) if reduction == "none" else [out.grad.item()] * len(losses)
+                    if input.requires_grad:
+                        d_x = [(((p - t) / max(1e-12, p * (1.0 - p))) / count) * g for p, t, g in zip(flat_p, flat_t, flat_g)]
+                        d_input = backend.from_data(backend.reshape(d_x, s_input), dtype="float32")
+                        input._accumulate_grad_data(d_input)
+                    if target.requires_grad:
+                        d_y = [((math.log(max(1e-12, 1.0 - p)) - math.log(max(1e-12, p))) / count) * g for p, g in zip(flat_p, flat_g)]
+                        d_target = backend.from_data(backend.reshape(d_y, s_input), dtype="float32")
+                        target._accumulate_grad_data(d_target)
         _attach_grad_fn(out, (input, target), _backward)
     return out
 
