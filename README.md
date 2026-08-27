@@ -159,18 +159,15 @@ termux-train/
 
 ---
 
-## ⚖️ Disclaimer (면책 조항)
+## ⚖️ Disclaimer
 
-> **Disclaimer:**  
-> *termux-train (AMEVA-Termux) is an independent open-source project developed for the Android Termux environment and is not officially affiliated with, endorsed by, or sponsored by the Termux project, PyTorch, or Meta.*  
-> 
-> *(본 프로젝트는 안드로이드 Termux 환경을 위해 개발된 독립적인 오픈소스 라이브러리이며, Termux 공식 프로젝트 및 PyTorch, Meta와 직접적인 제휴 관계가 아닙니다.)*
+> *This project is an independent open-source library developed for the Android Termux environment and is not officially affiliated with or endorsed by the Termux project, PyTorch Foundation, or Meta Platforms, Inc.*
 
 ---
 
 ## 📄 License
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+Apache License 2.0. Copyright (c) 2026 uno-km (AMEVA Foundation).
 
 
 ---
