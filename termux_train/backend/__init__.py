@@ -2,6 +2,16 @@
 termux_train.backend
 ====================
 Pluggable, thread-safe backend switcher and manager using contextvars.
+
+Backend 우선순위 (set_backend('auto')):
+  vulkan > numpy > python
+
+사용 방법:
+    from termux_train import set_backend
+    set_backend('auto')    # Vulkan 자동 선택 (없으면 numpy)
+    set_backend('vulkan')  # Vulkan 강제 (ameva-vulkan-runtime 필요)
+    set_backend('numpy')   # NumPy NEON
+    set_backend('python')  # 순수 Python
 """
 
 from contextvars import ContextVar
@@ -20,8 +30,25 @@ try:
 except ImportError:
     pass
 
-# Default backend selection: Prefer numpy if installed, fallback to pure python
-_DEFAULT_BACKEND: str = "numpy" if "numpy" in _BACKENDS else "python"
+# [신규] VulkanBackend — ameva-vulkan-runtime 설치 시 자동 활성화
+# pip install termux-train[vulkan]  또는  pip install ameva-vulkan-runtime
+try:
+    from .vulkan_backend import VulkanBackend
+    _BACKENDS["vulkan"] = VulkanBackend()
+except ImportError:
+    pass  # ameva-vulkan-runtime 미설치 → vulkan 백엔드 비노출 (정상 동작)
+except Exception:
+    pass  # VulkanBackend 초기화 실패 → 비노출 (NumPy 폴백)
+
+# Default: vulkan > numpy > python
+def _select_default() -> str:
+    if "vulkan" in _BACKENDS:
+        return "vulkan"
+    if "numpy" in _BACKENDS:
+        return "numpy"
+    return "python"
+
+_DEFAULT_BACKEND: str = _select_default()
 _ACTIVE_BACKEND_VAR: ContextVar[str] = ContextVar("termux_train_active_backend", default=_DEFAULT_BACKEND)
 
 def available_backends() -> List[str]:
@@ -33,20 +60,36 @@ def get_backend(name: Optional[str] = None) -> BaseBackend:
     if name is not None:
         name_clean = name.lower().strip()
         if name_clean not in _BACKENDS:
-            raise ValueError(f"Backend '{name}' is not available. Available: {available_backends()}")
+            _msg = f"Backend '{name}' is not available. Available: {available_backends()}"
+            if name_clean == "vulkan":
+                _msg += "\n[Action] pip install ameva-vulkan-runtime  또는  pip install termux-train[vulkan]"
+            raise ValueError(_msg)
         return _BACKENDS[name_clean]
     current = _ACTIVE_BACKEND_VAR.get()
     return _BACKENDS[current]
 
 def set_backend(name: str = "auto") -> BaseBackend:
-    """Switch the active compute backend ('auto', 'python', 'numpy') for the current context."""
+    """Switch the active compute backend for the current context.
+
+    Args:
+        name: 'auto' (vulkan > numpy > python), 'vulkan', 'numpy', 'python'.
+
+    Returns:
+        Selected backend instance.
+
+    Raises:
+        ValueError: If requested backend is unavailable (includes install instruction for 'vulkan').
+    """
     name_clean = name.lower().strip()
     if name_clean == "auto":
-        target = "numpy" if "numpy" in _BACKENDS else "python"
+        target = _select_default()
         _ACTIVE_BACKEND_VAR.set(target)
         return _BACKENDS[target]
     if name_clean not in _BACKENDS:
-        raise ValueError(f"Backend '{name}' is not available. Available: {available_backends()} or 'auto'")
+        _msg = f"Backend '{name}' is not available. Available: {available_backends()} or 'auto'"
+        if name_clean == "vulkan":
+            _msg += "\n[Action] pip install ameva-vulkan-runtime  또는  pip install termux-train[vulkan]"
+        raise ValueError(_msg)
     _ACTIVE_BACKEND_VAR.set(name_clean)
     return _BACKENDS[name_clean]
 
