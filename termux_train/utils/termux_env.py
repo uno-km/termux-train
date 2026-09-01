@@ -20,8 +20,24 @@ from typing import Any, Dict
 logger = logging.getLogger("termux_train.utils.termux_env")
 
 
+# [B방안] Platform SSOT: ameva-vulkan-runtime.platform 에서 공유 구현을 가져옵니다.
+try:
+    from ameva_vulkan_runtime.platform import (
+        is_android as _ameva_is_android,
+        is_termux as _ameva_is_termux,
+    )
+    _AMEVA_PLATFORM_AVAILABLE = True
+except ImportError:
+    _AMEVA_PLATFORM_AVAILABLE = False
+
+
 def is_android() -> bool:
-    """Check if the current runtime is running on Android."""
+    """Check if the current runtime is running on Android.
+
+    [B방안] ameva-vulkan-runtime.platform.is_android() 를 SSOT 로 사용합니다.
+    """
+    if _AMEVA_PLATFORM_AVAILABLE:
+        return _ameva_is_android()
     if os.path.exists("/system/build.prop"):
         return True
     if "ANDROID_ROOT" in os.environ or "ANDROID_DATA" in os.environ:
@@ -30,9 +46,14 @@ def is_android() -> bool:
 
 
 def is_termux() -> bool:
-    """Check if running specifically inside the Termux native environment."""
+    """Check if running specifically inside the Termux native environment.
+
+    [B방안] ameva-vulkan-runtime.platform.is_termux() 를 SSOT 로 사용합니다.
+    """
+    if _AMEVA_PLATFORM_AVAILABLE:
+        return _ameva_is_termux()
     prefix = os.environ.get("PREFIX", "")
-    if "com.termux" in prefix:
+    if "com.termux" in prefix or "TERMUX_VERSION" in os.environ:
         return True
     if os.path.exists("/data/data/com.termux"):
         return True
