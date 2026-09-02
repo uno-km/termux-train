@@ -14,6 +14,7 @@ import json
 import argparse
 import random
 import math
+import struct
 from typing import Dict, Any, Tuple, Optional, List
 
 try:
@@ -170,16 +171,18 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
                 mmap_ds.close()
                 raise ValueError(f"MMap binary dataset at '{data_path}' has insufficient tokens for seq_len={seq_len}.")
 
-            x_list = []
-            y_list = []
-            for idx in range(total_samples):
-                inp_t, tgt_t = mmap_ds[idx]
-                x_list.append(inp_t.tolist()[0])
-                y_list.append(tgt_t.tolist()[0])
+            # Direct C-level binary buffer extraction: Read all sequence tokens in single slice
+            total_needed_tokens = total_samples + seq_len
+            raw_bytes = mmap_ds._mmap[8:8 + total_needed_tokens * 8]
+            fmt = f"<{total_needed_tokens}q"
+            all_tokens = list(struct.unpack(fmt, raw_bytes))
             mmap_ds.close()
 
-            x = Tensor(x_list, dtype="int64")
-            y = Tensor(y_list, dtype="int64")
+            x_chunks = [all_tokens[i:i + seq_len] for i in range(total_samples)]
+            y_chunks = [all_tokens[i + 1:i + 1 + seq_len] for i in range(total_samples)]
+
+            x = Tensor(x_chunks, dtype="int64")
+            y = Tensor(y_chunks, dtype="int64")
             return x, y, cfg_dim, cfg_out_dim
 
         else:
@@ -320,6 +323,15 @@ def run_session(cfg: Dict[str, Any]) -> None:
                 }
             else:
                 t_dict = dict(model.named_parameters())
+
+            # Add Optimizer Momentum Buffers (exp_avg, exp_avg_sq) into checkpoint
+            if hasattr(optimizer, "state_dict"):
+                opt_state = optimizer.state_dict()
+                for p_idx, s_dict in opt_state.get("state", {}).items():
+                    if "exp_avg" in s_dict and s_dict["exp_avg"] is not None:
+                        t_dict[f"optim_exp_avg_{p_idx}"] = Tensor(s_dict["exp_avg"], dtype="float32")
+                    if "exp_avg_sq" in s_dict and s_dict["exp_avg_sq"] is not None:
+                        t_dict[f"optim_exp_avg_sq_{p_idx}"] = Tensor(s_dict["exp_avg_sq"], dtype="float32")
 
             checkpoint.save_safetensors(
                 t_dict,
