@@ -159,10 +159,30 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
 
             return x, y, cfg_dim, cfg_out_dim
 
+        elif ext in (".bin", ".mmap"):
+            from termux_train.data.mmap_dataset import MMapTokenDataset
+            mmap_ds = MMapTokenDataset(data_path, seq_len=seq_len)
+            total_mmap_samples = min(len(mmap_ds), 10_000)
+            if total_mmap_samples < 1:
+                mmap_ds.close()
+                raise ValueError(f"MMap binary dataset at '{data_path}' has insufficient tokens for seq_len={seq_len}.")
+
+            x_list = []
+            y_list = []
+            for idx in range(total_mmap_samples):
+                inp_t, tgt_t = mmap_ds[idx]
+                x_list.append(inp_t.tolist()[0])
+                y_list.append(tgt_t.tolist()[0])
+            mmap_ds.close()
+
+            x = Tensor(x_list, dtype="int64")
+            y = Tensor(y_list, dtype="int64")
+            return x, y, cfg_dim, cfg_out_dim
+
         else:
             raise ValueError(
                 f"Unsupported dataset file extension '{ext}' at '{data_path}'. "
-                "Supported formats: .safetensors, .jsonl, .json, .txt"
+                "Supported formats: .safetensors, .jsonl, .json, .txt, .bin, .mmap"
             )
 
     # Synthetic Benchmark Data — only reached when data_path is explicitly None/omitted
@@ -260,6 +280,13 @@ def run_session(cfg: Dict[str, Any]) -> None:
             batch_loss.backward()
             optimizer.step()
             loss_val = float(batch_loss.item())
+
+            if not math.isfinite(loss_val):
+                raise FloatingPointError(
+                    f"Training diverged with non-finite loss (loss={loss_val}) at epoch {ep+1}, step {global_step+1}. "
+                    f"Fail-Closed early abort triggered to prevent weight corruption."
+                )
+
             epoch_loss_sum += loss_val
             global_step += 1
 

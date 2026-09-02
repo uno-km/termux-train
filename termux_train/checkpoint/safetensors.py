@@ -170,13 +170,28 @@ def load_safetensors(
             raise ValueError("Invalid safetensors file: insufficient header length bytes.")
 
         header_len = struct.unpack("<Q", header_len_bytes)[0]
+        file_size = os.path.getsize(filepath)
+
+        MAX_HEADER_LEN = 100_000_000  # HuggingFace standard: 100MB max header length
+        if header_len > MAX_HEADER_LEN:
+            raise ValueError(
+                f"Invalid safetensors file: header length ({header_len} bytes) exceeds "
+                f"the 100MB security limit ({MAX_HEADER_LEN} bytes)."
+            )
+        if header_len > max(0, file_size - 8):
+            raise ValueError(
+                f"Invalid safetensors file: header length ({header_len} bytes) exceeds "
+                f"file payload boundary ({max(0, file_size - 8)} bytes)."
+            )
+
         header_json_bytes = f.read(header_len)
+        if len(header_json_bytes) != header_len:
+            raise IOError(f"Truncated safetensors header: expected {header_len} bytes, got {len(header_json_bytes)}")
+
         header = json.loads(header_json_bytes.decode("utf-8"))
 
         data_start_offset = 8 + header_len
         metadata = header.pop("__metadata__", {})
-
-        file_size = os.path.getsize(filepath)
         tensors: Dict[str, Tensor] = {}
         for name, info in header.items():
             dtype_str = SAFETENSORS_TO_DTYPE.get(info["dtype"], "float32")

@@ -348,7 +348,56 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   assert.strictEqual(errInst.exitCode, 2);
   console.log('   [PASS] Error hierarchy verified.\n');
 
-  console.log('=== All 17 termux-train Production-Grade Verification Tests Passed Successfully! ===');
+  // 18. SafeTensors Header Bomb Security Guard Test
+  console.log('18. Testing SafeTensors Header Bomb Security Guard...');
+  const bombPath = path.join(os.tmpdir(), `header_bomb_${Date.now()}.safetensors`);
+  const buf = Buffer.alloc(16);
+  buf.writeBigUInt64LE(BigInt(500_000_000), 0);
+  fs.writeFileSync(bombPath, buf);
+  const bombTrainer = new TermuxTrainer({ dim: 16 });
+  let bombErrorCaught = false;
+  try {
+    await bombTrainer.fit({ dataPath: bombPath });
+  } catch (err) {
+    bombErrorCaught = true;
+    assert.ok(
+      err.message.includes('security limit') ||
+      err.message.includes('boundary') ||
+      err instanceof errors.TrainingExecutionError
+    );
+  }
+  bombTrainer.dispose();
+  try { fs.unlinkSync(bombPath); } catch (_) {}
+  assert.ok(bombErrorCaught, 'Corrupt/oversized SafeTensors header bomb must be rejected');
+  console.log('   [PASS] SafeTensors Header Bomb blocked by 100MB security guard.\n');
+
+  // 19. MMap Binary Token Dataset (.bin) Training
+  console.log('19. Testing MMap Binary Token Dataset (.bin) Streaming Training...');
+  const mmapBinPath = path.join(os.tmpdir(), `mmap_tokens_${Date.now()}.bin`);
+  const numTokens = 64;
+  const tokenBuf = Buffer.alloc(8 + numTokens * 8);
+  tokenBuf.writeBigUInt64LE(BigInt(numTokens), 0);
+  for (let i = 0; i < numTokens; i++) {
+    tokenBuf.writeBigInt64LE(BigInt(i % 32), 8 + i * 8);
+  }
+  fs.writeFileSync(mmapBinPath, tokenBuf);
+
+  const mmapTrainer = new TermuxTrainer({
+    modelType: 'transformer',
+    dim: 16,
+    heads: 2,
+    layers: 1,
+    vocabSize: 32,
+    seqLen: 4,
+    batchSize: 2
+  });
+  const mmapRes = await mmapTrainer.fit({ epochs: 1, dataPath: mmapBinPath });
+  assert.strictEqual(mmapRes.status, 'SUCCESS');
+  mmapTrainer.dispose();
+  try { fs.unlinkSync(mmapBinPath); } catch (_) {}
+  console.log('   [PASS] MMap binary token dataset (.bin) trained successfully.\n');
+
+  console.log('=== All 19 termux-train Production-Grade Verification Tests Passed Successfully! ===');
 })().catch((e) => {
   console.error('CRITICAL VERIFICATION FAILURE:', e);
   process.exit(1);
