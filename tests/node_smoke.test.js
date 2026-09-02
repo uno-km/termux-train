@@ -235,8 +235,6 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   assert.ok(backendErrorCaught, 'Requesting unsupported backend must fail closed');
   console.log('   [PASS] Backend Fail-Closed enforcement verified.\n');
 
-  // 11. Odd Dimension MLP/Linear Training
-  console.log('11. Testing Odd Dimension MLP Training (dim=15, hiddenDim=30)...');
   // 11. Odd Dimension MLP/Linear Training with Unrelated Heads Option (MLP Isolation)
   console.log('11. Testing Odd Dimension MLP Training (dim=15, heads=3 ignored)...');
   const t11 = new TermuxTrainer({
@@ -395,9 +393,59 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   assert.strictEqual(mmapRes.status, 'SUCCESS');
   mmapTrainer.dispose();
   try { fs.unlinkSync(mmapBinPath); } catch (_) {}
-  console.log('   [PASS] MMap binary token dataset (.bin) trained successfully.\n');
+  // 20. Multilingual UTF-8 Text Training with ByteTokenizer & BOM Support
+  console.log('20. Testing Multilingual (Korean/Emoji/BOM) UTF-8 Text Training with ByteTokenizer...');
+  const multiTxtPath = path.join(os.tmpdir(), `multilingual_${Date.now()}.txt`);
+  const multiContent = '\ufeff안녕하세요 세계! 🚀 High-Performance On-Device AI 훈련 테스트 딥러닝 1234567890';
+  fs.writeFileSync(multiTxtPath, multiContent, 'utf-8');
 
-  console.log('=== All 19 termux-train Production-Grade Verification Tests Passed Successfully! ===');
+  const multiTrainer = new TermuxTrainer({
+    modelType: 'transformer',
+    dim: 16,
+    heads: 2,
+    layers: 1,
+    vocabSize: 260,
+    seqLen: 8,
+    batchSize: 2
+  });
+  const multiRes = await multiTrainer.fit({ epochs: 1, dataPath: multiTxtPath });
+  assert.strictEqual(multiRes.status, 'SUCCESS');
+  multiTrainer.dispose();
+  try { fs.unlinkSync(multiTxtPath); } catch (_) {}
+  console.log('   [PASS] Multilingual UTF-8 text with ByteTokenizer & BOM trained successfully.\n');
+
+  // 21. Large MMap Dataset Training (12,000 tokens — bypassing 10k limit)
+  console.log('21. Testing Large MMap Binary Token Dataset (12,000 samples > 10k cap)...');
+  const largeMmapPath = path.join(os.tmpdir(), `large_mmap_${Date.now()}.bin`);
+  const largeNumTokens = 12008; // 12000 samples for seq_len=8
+  const largeBuf = Buffer.alloc(8 + largeNumTokens * 8);
+  largeBuf.writeBigUInt64LE(BigInt(largeNumTokens), 0);
+  for (let i = 0; i < largeNumTokens; i++) {
+    largeBuf.writeBigInt64LE(BigInt(i % 256), 8 + i * 8);
+  }
+  fs.writeFileSync(largeMmapPath, largeBuf);
+
+  const largeMmapTrainer = new TermuxTrainer({
+    modelType: 'transformer',
+    dim: 16,
+    heads: 2,
+    layers: 1,
+    vocabSize: 260,
+    seqLen: 8,
+    batchSize: 16
+  });
+  let largeMmapBatches = 0;
+  largeMmapTrainer.on('step', (m) => {
+    largeMmapBatches = m.batchesPerEpoch;
+    assert.ok(m.batchesPerEpoch >= 750, `Batches per epoch (${m.batchesPerEpoch}) must exceed 750 (12000 / 16)`);
+  });
+  const largeRes = await largeMmapTrainer.fit({ epochs: 1, dataPath: largeMmapPath });
+  assert.strictEqual(largeRes.status, 'SUCCESS');
+  largeMmapTrainer.dispose();
+  try { fs.unlinkSync(largeMmapPath); } catch (_) {}
+  console.log(`   [PASS] Large MMap binary dataset (12,000 samples, ${largeMmapBatches} batches/epoch) fully trained.\n`);
+
+  console.log('=== All 21 termux-train Production-Grade Verification Tests Passed Successfully! ===');
 })().catch((e) => {
   console.error('CRITICAL VERIFICATION FAILURE:', e);
   process.exit(1);

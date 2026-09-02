@@ -136,15 +136,18 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
             return x, y, in_dim, out_dim
 
         elif ext == ".txt":
-            with open(data_path, "r", encoding="utf-8") as f:
+            with open(data_path, "r", encoding="utf-8-sig") as f:
                 text = f.read()
-            token_ids = [ord(c) % vocab_size for c in text]
+
+            from termux_train.tokenization.byte import ByteTokenizer
+            tokenizer = ByteTokenizer()
+            token_ids = tokenizer.encode(text)
             total_tokens = len(token_ids)
             chunk_count = total_tokens // (seq_len + 1)
             if chunk_count < 1:
                 raise ValueError(
-                    f"Text dataset at '{data_path}' is too short to produce even one sequence chunk. "
-                    f"Need at least {seq_len + 1} characters, got {total_tokens}."
+                    f"Text dataset at '{data_path}' has {total_tokens} UTF-8 tokens, which is "
+                    f"too short for sequence window of {seq_len + 1} tokens."
                 )
             x_chunks = [token_ids[i * seq_len:(i + 1) * seq_len] for i in range(chunk_count)]
             y_chunks = [token_ids[i * seq_len + 1:(i + 1) * seq_len + 1] for i in range(chunk_count)]
@@ -162,14 +165,14 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
         elif ext in (".bin", ".mmap"):
             from termux_train.data.mmap_dataset import MMapTokenDataset
             mmap_ds = MMapTokenDataset(data_path, seq_len=seq_len)
-            total_mmap_samples = min(len(mmap_ds), 10_000)
-            if total_mmap_samples < 1:
+            total_samples = len(mmap_ds)
+            if total_samples < 1:
                 mmap_ds.close()
                 raise ValueError(f"MMap binary dataset at '{data_path}' has insufficient tokens for seq_len={seq_len}.")
 
             x_list = []
             y_list = []
-            for idx in range(total_mmap_samples):
+            for idx in range(total_samples):
                 inp_t, tgt_t = mmap_ds[idx]
                 x_list.append(inp_t.tolist()[0])
                 y_list.append(tgt_t.tolist()[0])
@@ -188,8 +191,9 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
     # Synthetic Benchmark Data — only reached when data_path is explicitly None/omitted
     total_synthetic_samples = batch_size * 4
     if m_type in ("transformer", "transformer-lm", "rope"):
-        raw_x = [[random.randint(0, vocab_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
-        raw_y = [[random.randint(0, vocab_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
+        v_size = max(int(cfg.get("vocabSize", 260)), 260)
+        raw_x = [[random.randint(0, v_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
+        raw_y = [[random.randint(0, v_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
         return Tensor(raw_x, dtype="int64"), Tensor(raw_y, dtype="int64"), cfg_dim, cfg_out_dim
     else:
         return randn((total_synthetic_samples, cfg_dim)), randn((total_synthetic_samples, cfg_out_dim)), cfg_dim, cfg_out_dim
@@ -233,7 +237,7 @@ def run_session(cfg: Dict[str, Any]) -> None:
         criterion = nn.MSELoss()
 
     elif m_type in ("transformer", "transformer-lm", "rope"):
-        vocab_size = int(cfg.get("vocabSize", 256))
+        vocab_size = max(int(cfg.get("vocabSize", 260)), 260)
         heads = int(cfg.get("heads", 2))
         layers = int(cfg.get("layers", 2))
         model = nn.TinyTransformerLM(
