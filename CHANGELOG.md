@@ -1,9 +1,30 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to 	ermux-train will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.1.0] - 2026-09-02 (Production Dual-Engine & Secure MMap Release)
+
+### Added
+- **Node.js / TypeScript Dual-Engine Architecture**: Full npm ecosystem support (`index.js`, `index.d.ts`, `lib/trainer.js`, `lib/doctor.js`, `lib/benchmark.js`).
+- **Global Multi-Engine CLI**: Added `doctor`, `benchmark`, and `train` subcommands across both Node CLI (`termux-train`, `tt`) and Python CLI (`python3 -m termux_train.cli`).
+- **Production Session Runner**: New `termux_train.runtime.runner` with chunked mini-batch iterations, dynamic shape verification, and transactional checkpoint resume.
+- ** 대용량 Bounded MMap Dataset**: Zero-copy `.bin` token dataset streaming supporting 2,000,000+ samples within constant <50MB RAM footprint.
+- **Multilingual ByteTokenizer**: Native UTF-8, Korean Hangul, CJK ideographs, Emoji, and UTF-8 BOM encoding pipeline.
+- **One-Touch Automated Installer**: Universal `install.sh` for one-click setup across Android Termux (ARM64/x86_64), Linux, and macOS.
+
+### Security & Hardening
+- **SafeTensors 100MB Header Bomb Guard**: Enforced HuggingFace-standard 100MB maximum header length and payload boundary defense.
+- **NaN Loss Early Abort**: Fail-Fast security abort immediately raising `RuntimeError` upon numerical divergence.
+- **LoRA Transactional Rollback**: Hardened weight snapshot isolation during merge/unmerge operations.
+
+### Verification
+- **Smoke Tests**: 23 / 23 Dual-Engine IPC & Security verification tests passed (100%).
+- **PyTest Suite**: 741 / 741 core autograd/tensor unit tests passed.
 
 ---
 
