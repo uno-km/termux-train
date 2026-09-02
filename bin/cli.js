@@ -127,6 +127,7 @@ async function main() {
     const loraRank = parseInt(getArg('--rank') || '8', 10);
     const dim = parseInt(getArg('--dim') || '32', 10);
     const checkpoint = getArg('--checkpoint') || null;
+    const resume = getArg('--resume') || null;
     const data = getArg('--data') || getArg('--dataPath') || null;
     const backend = getArg('--backend') || 'auto';
     const batchSize = parseInt(getArg('--batch-size') || getArg('--batchSize') || '16', 10);
@@ -137,7 +138,12 @@ async function main() {
       process.exit(1);
     }
 
-    console.log(`[*] Initializing TermuxTrainer (model=${modelType}, dim=${dim}, rank=${loraRank}, epochs=${epochs}, lr=${lr}, batchSize=${batchSize}, backend=${backend}, data=${data || 'synthetic'})...`);
+    if (resume && !fs.existsSync(path.resolve(resume))) {
+      console.error(`[ERROR] Specified resume checkpoint path does not exist: "${resume}"`);
+      process.exit(1);
+    }
+
+    console.log(`[*] Initializing TermuxTrainer (model=${modelType}, dim=${dim}, rank=${loraRank}, epochs=${epochs}, lr=${lr}, batchSize=${batchSize}, backend=${backend}, data=${data || 'synthetic'}, resume=${resume || 'none'})...`);
     const trainer = new TermuxTrainer({
       modelType,
       dim,
@@ -160,6 +166,7 @@ async function main() {
       const res = await trainer.fit({
         epochs,
         checkpointPath: checkpoint,
+        resumePath: resume ? path.resolve(resume) : null,
         dataPath: data ? path.resolve(data) : null
       });
       console.log(`[+] Training completed successfully in ${res.epochs} epochs.`);

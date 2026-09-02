@@ -264,7 +264,37 @@ def run_session(cfg: Dict[str, Any]) -> None:
         optimizer = optim.AdamW(model.parameters(), lr=lr)
         criterion = nn.MSELoss()
 
-    # 4. Training Loop with Mini-Batch Iteration
+    # 4. Resume / Load Checkpoint (if provided)
+    resume_path = cfg.get("resumePath") or cfg.get("resume")
+    if resume_path:
+        if not os.path.exists(resume_path):
+            raise FileNotFoundError(f"Resume checkpoint file not found: {resume_path}")
+        loaded_tensors, ckpt_meta = checkpoint.load_safetensors(resume_path)
+
+        # 4.1 Restore Model Parameters
+        if m_type in ("lora", "linear-lora") and hasattr(model, "lora_A") and hasattr(model, "lora_B"):
+            if "lora_A" in loaded_tensors:
+                model.lora_A.data = loaded_tensors["lora_A"].data
+            if "lora_B" in loaded_tensors:
+                model.lora_B.data = loaded_tensors["lora_B"].data
+        else:
+            for name, param in model.named_parameters():
+                if name in loaded_tensors:
+                    param.data = loaded_tensors[name].data
+
+        # 4.2 Restore Optimizer Momentum Buffers
+        if hasattr(optimizer, "state"):
+            for p_idx, param in enumerate(model.parameters()):
+                exp_avg_key = f"optim_exp_avg_{p_idx}"
+                exp_avg_sq_key = f"optim_exp_avg_sq_{p_idx}"
+                if exp_avg_key in loaded_tensors and exp_avg_sq_key in loaded_tensors:
+                    if param not in optimizer.state:
+                        optimizer.state[param] = {}
+                    optimizer.state[param]["step"] = int(ckpt_meta.get("global_step", 1))
+                    optimizer.state[param]["exp_avg"] = loaded_tensors[exp_avg_key].data
+                    optimizer.state[param]["exp_avg_sq"] = loaded_tensors[exp_avg_sq_key].data
+
+    # 5. Training Loop with Mini-Batch Iteration
     global_step = 0
     total_steps = epochs * dataset.num_batches
 

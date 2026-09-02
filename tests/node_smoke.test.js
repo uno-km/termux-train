@@ -444,7 +444,33 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   try { fs.unlinkSync(largeMmapPath); } catch (_) {}
   console.log(`   [PASS] Large MMap binary dataset (12,000 samples, ${largeMmapBatches} batches/epoch) fully trained.\n`);
 
-  console.log('=== All 21 termux-train Production-Grade Verification Tests Passed Successfully! ===');
+  // 22. Full Checkpoint Resume & Optimizer State Recovery
+  console.log('22. Testing Checkpoint Resume & Continuous Optimizer Training...');
+  const resumeCkptPath = path.join(os.tmpdir(), `resume_ckpt_${Date.now()}.safetensors`);
+
+  // Phase 1: Train for 2 epochs and save checkpoint
+  const p1Trainer = new TermuxTrainer({ modelType: 'mlp', dim: 16, hiddenDim: 32, outDim: 2, lr: 0.01, batchSize: 4 });
+  let p1FinalLoss = 0;
+  p1Trainer.on('step', (m) => { p1FinalLoss = m.loss; });
+  await p1Trainer.fit({ epochs: 2, checkpointPath: resumeCkptPath });
+  p1Trainer.dispose();
+  assert.ok(fs.existsSync(resumeCkptPath), 'Phase 1 checkpoint must be created');
+
+  // Phase 2: Resume from checkpoint and train for 2 more epochs
+  const p2Trainer = new TermuxTrainer({ modelType: 'mlp', dim: 16, hiddenDim: 32, outDim: 2, lr: 0.01, batchSize: 4 });
+  let p2InitialLoss = 0;
+  let p2FinalLoss = 0;
+  p2Trainer.on('step', (m) => {
+    if (m.epoch === 1) p2InitialLoss = m.loss;
+    p2FinalLoss = m.loss;
+  });
+  const p2Res = await p2Trainer.fit({ epochs: 2, resumePath: resumeCkptPath });
+  assert.strictEqual(p2Res.status, 'SUCCESS');
+  p2Trainer.dispose();
+  try { fs.unlinkSync(resumeCkptPath); } catch (_) {}
+  console.log(`   [PASS] Resume training completed: P1 Loss=${p1FinalLoss.toFixed(4)} → P2 Resume Loss=${p2InitialLoss.toFixed(4)} → Final Loss=${p2FinalLoss.toFixed(4)}\n`);
+
+  console.log('=== All 22 termux-train Production-Grade Verification Tests Passed Successfully! ===');
 })().catch((e) => {
   console.error('CRITICAL VERIFICATION FAILURE:', e);
   process.exit(1);

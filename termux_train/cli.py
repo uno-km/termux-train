@@ -300,6 +300,7 @@ def cmd_train(args):
         "seqLen": getattr(args, "seq_len", 32),
         "backend": getattr(args, "backend", "auto"),
         "checkpointPath": getattr(args, "checkpoint", None),
+        "resumePath": getattr(args, "resume", None),
     }
 
     try:
@@ -359,6 +360,7 @@ def main():
     p_train.add_argument("--seq-len", type=int, default=32, help="Sequence length (for transformer)")
     p_train.add_argument("--backend", type=str, default="auto", help="Compute backend (auto, vulkan, numpy, python)")
     p_train.add_argument("--checkpoint", type=str, default=None, help="Path to save SafeTensors checkpoint")
+    p_train.add_argument("--resume", type=str, default=None, help="Path to existing SafeTensors checkpoint to resume training from")
     p_train.set_defaults(func=cmd_train)
 
     args = parser.parse_args()
