@@ -363,12 +363,30 @@ def main():
     p_train.add_argument("--resume", type=str, default=None, help="Path to existing SafeTensors checkpoint to resume training from")
     p_train.set_defaults(func=cmd_train)
 
+    # ── AMEVA Component Protocol v1 ─────────────────────────────────────────
+    try:
+        from ameva_component.cli_support import build_protocol_subcommands
+        build_protocol_subcommands(subparsers)
+        _protocol_available = True
+    except ImportError:
+        _protocol_available = False
+    # ────────────────────────────────────────────────────────────────────────
+
     args = parser.parse_args()
     if args.command is None:
         cmd_info(args)
+    elif args.command in ("component", "model", "instance") and _protocol_available:
+        from ameva_component.cli_support import dispatch_protocol
+        from termux_train.control import TrainControl
+        dispatch_protocol(args, TrainControl())
+    elif args.command in ("component", "model", "instance"):
+        import sys
+        print("[ERROR] ameva-component-sdk not installed.", file=sys.stderr)
+        sys.exit(1)
     else:
         args.func(args)
 
 
 if __name__ == "__main__":
     main()
+
