@@ -58,10 +58,14 @@ function printHelp() {
   console.log('  demo <1..8>                      Execute one of 8 canonical example demos\n');
   console.log('Options:');
   console.log('  --json                           Output results in standard JSON format');
-  console.log('  --dim <num>                      Matrix dimension for benchmark (default: 256)');
+  console.log('  --dim <num>                      Matrix dimension for benchmark / model dim (default: 256 / 32)');
   console.log('  --data <path>                    Path to dataset file (.safetensors, .jsonl, .txt)');
   console.log('  --epochs <num>                   Number of training epochs (default: 5)');
   console.log('  --lr <val>                       Learning rate (default: 0.001)');
+  console.log('  --batch-size <num>               Mini-batch size (default: 16)');
+  console.log('  --seq-len <num>                  Sequence length for transformer (default: 32)');
+  console.log('  --backend <name>                 Compute backend (auto, vulkan, numpy, python)');
+  console.log('  --checkpoint <path>              Path to save SafeTensors checkpoint');
   console.log('  -v, --version                    Display version information');
   console.log('  -h, --help                       Show this help message');
 }
@@ -124,18 +128,24 @@ async function main() {
     const dim = parseInt(getArg('--dim') || '32', 10);
     const checkpoint = getArg('--checkpoint') || null;
     const data = getArg('--data') || getArg('--dataPath') || null;
+    const backend = getArg('--backend') || 'auto';
+    const batchSize = parseInt(getArg('--batch-size') || getArg('--batchSize') || '16', 10);
+    const seqLen = parseInt(getArg('--seq-len') || getArg('--seqLen') || '32', 10);
 
     if (data && !fs.existsSync(path.resolve(data))) {
       console.error(`[ERROR] Specified dataset path does not exist: "${data}"`);
       process.exit(1);
     }
 
-    console.log(`[*] Initializing TermuxTrainer (model=${modelType}, dim=${dim}, rank=${loraRank}, epochs=${epochs}, lr=${lr}, data=${data || 'synthetic'})...`);
+    console.log(`[*] Initializing TermuxTrainer (model=${modelType}, dim=${dim}, rank=${loraRank}, epochs=${epochs}, lr=${lr}, batchSize=${batchSize}, backend=${backend}, data=${data || 'synthetic'})...`);
     const trainer = new TermuxTrainer({
       modelType,
       dim,
       loraRank,
-      lr
+      lr,
+      batchSize,
+      seqLen,
+      backend
     });
 
     trainer.on('step', (m) => {

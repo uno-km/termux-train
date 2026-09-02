@@ -294,7 +294,12 @@ class LoRALinear(Module):
                 raise ValueError(f"Non-finite value encountered in merged weight: {v}")
 
         # 3. Create independent deep snapshot of original base weight
-        snapshot = b.from_data(copy.deepcopy(self.base.weight.tolist()))
+        if hasattr(self.base.weight._data, "copy"):
+            snapshot = self.base.weight._data.copy()
+        elif isinstance(self.base.weight._data, list):
+            snapshot = copy.deepcopy(self.base.weight._data)
+        else:
+            snapshot = b.from_data(copy.deepcopy(self.base.weight.tolist()))
 
         # 4. Transactional commit with full rollback
         old_base_data = self.base.weight._data

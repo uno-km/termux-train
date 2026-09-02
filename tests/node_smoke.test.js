@@ -237,18 +237,21 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
 
   // 11. Odd Dimension MLP/Linear Training
   console.log('11. Testing Odd Dimension MLP Training (dim=15, hiddenDim=30)...');
+  // 11. Odd Dimension MLP/Linear Training with Unrelated Heads Option (MLP Isolation)
+  console.log('11. Testing Odd Dimension MLP Training (dim=15, heads=3 ignored)...');
   const t11 = new TermuxTrainer({
     modelType: 'mlp',
     dim: 15,
     hiddenDim: 30,
     outDim: 1,
+    heads: 3, // Non-dividing heads must not throw for MLP
     batchSize: 2
   });
   assert.strictEqual(t11.config.dim, 15);
   const t11Res = await t11.fit({ epochs: 1 });
   assert.strictEqual(t11Res.status, 'SUCCESS');
   t11.dispose();
-  console.log('   [PASS] Odd dimension MLP trained successfully.\n');
+  console.log('   [PASS] Odd dimension MLP trained successfully without heads restriction.\n');
 
   // 12. Strict RoPE Transformer Invariants Validation (Odd dim & Odd head_dim rejected)
   console.log('12. Testing RoPE Transformer Invariant Rejections...');
@@ -274,23 +277,43 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   assert.ok(ropeOddHeadDimCaught, 'Odd head_dim for RoPE Transformer must be rejected at constructor');
   console.log('   [PASS] RoPE mathematical invariants strictly enforced at constructor level.\n');
 
-  // 13. CLI Global Subcommand with --data Flag
-  console.log('13. Testing CLI Global train Subcommand with --data Flag...');
+  // 13. CLI Global Subcommand with --data, --backend, and --batch-size Flags
+  console.log('13. Testing CLI Global train Subcommand with --data and Extended Options...');
   const cliDataPath = path.join(os.tmpdir(), `cli_test_data_${Date.now()}.safetensors`);
   genSafeTensorsDataset(pyCmd, cliDataPath, 32, 16, 8);
   const cliPath = path.resolve(__dirname, '../bin/cli.js');
-  const cliRes = spawnSync(process.execPath, [cliPath, 'train', `--data=${cliDataPath}`, '--epochs=1', '--dim=16', '--rank=4'], {
+  const cliRes = spawnSync(process.execPath, [
+    cliPath,
+    'train',
+    `--data=${cliDataPath}`,
+    '--epochs=1',
+    '--dim=16',
+    '--rank=4',
+    '--batch-size=8',
+    '--backend=numpy'
+  ], {
     stdio: 'pipe',
     encoding: 'utf-8'
   });
   try { fs.unlinkSync(cliDataPath); } catch (_) {}
   assert.strictEqual(cliRes.status, 0, `CLI execution failed: ${cliRes.stderr || cliRes.stdout}`);
   assert.ok(cliRes.stdout.includes('data=') && !cliRes.stdout.includes('data=synthetic'), 'CLI must receive and log actual data path');
+  assert.ok(cliRes.stdout.includes('backend=numpy'), 'CLI must receive and apply backend option');
   assert.ok(cliRes.stdout.includes('Training completed successfully'));
-  console.log('   [PASS] CLI correctly parses --data and trains on user dataset.\n');
+  console.log('   [PASS] Node.js CLI correctly parses --data, --backend, --batch-size and trains.\n');
 
-  // 14. Real RoPE Transformer LM Training
-  console.log('14. Testing Real RoPE Transformer LM Training Loop...');
+  // 14. Python CLI train Subcommand Parity Test
+  console.log('14. Testing Python CLI "train" Subcommand Parity...');
+  const pyCliRes = spawnSync(pyCmd, ['-m', 'termux_train.cli', 'train', '--epochs', '1', '--dim', '16', '--model', 'mlp'], {
+    stdio: 'pipe',
+    encoding: 'utf-8'
+  });
+  assert.strictEqual(pyCliRes.status, 0, `Python CLI train failed: ${pyCliRes.stderr || pyCliRes.stdout}`);
+  assert.ok(pyCliRes.stdout.includes('__DONE__'), 'Python CLI train must complete successfully');
+  console.log('   [PASS] Python CLI train subcommand parity verified.\n');
+
+  // 15. Real RoPE Transformer LM Training Loop
+  console.log('15. Testing Real RoPE Transformer LM Training Loop...');
   const tfTrainer = new TermuxTrainer({
     modelType: 'transformer',
     dim: 16,
@@ -309,23 +332,23 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   tfTrainer.dispose();
   console.log('   [PASS] RoPE Transformer LM trained successfully.\n');
 
-  // 15. Async Benchmark via benchmarker module
-  console.log('15. Testing Async Benchmark (via termux_train.runtime.benchmarker)...');
+  // 16. Async Benchmark via benchmarker module
+  console.log('16. Testing Async Benchmark (via termux_train.runtime.benchmarker)...');
   const bm = await termuxTrain.benchmark({ dim: 64, iters: 5 });
   assert.ok(Number.isFinite(bm.gemmLatencyMs) && bm.gemmLatencyMs >= 0);
   assert.ok(Number.isFinite(bm.autogradStepLatencyMs) && bm.autogradStepLatencyMs >= 0);
   assert.ok(Number.isFinite(bm.throughputGflops) && bm.throughputGflops >= 0);
   console.log(`   [PASS] Benchmark: GEMM=${bm.gemmLatencyMs}ms, ${bm.throughputGflops} GFLOPS\n`);
 
-  // 16. Error hierarchy
-  console.log('16. Testing Error Class Hierarchy...');
+  // 17. Error hierarchy
+  console.log('17. Testing Error Class Hierarchy...');
   const errInst = new errors.TrainingExecutionError('test', 2, 'stderr');
   assert.ok(errInst instanceof errors.TermuxTrainError);
   assert.ok(errInst instanceof Error);
   assert.strictEqual(errInst.exitCode, 2);
   console.log('   [PASS] Error hierarchy verified.\n');
 
-  console.log('=== All 16 termux-train Production-Grade Verification Tests Passed Successfully! ===');
+  console.log('=== All 17 termux-train Production-Grade Verification Tests Passed Successfully! ===');
 })().catch((e) => {
   console.error('CRITICAL VERIFICATION FAILURE:', e);
   process.exit(1);

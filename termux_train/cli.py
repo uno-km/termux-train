@@ -2,21 +2,8 @@
 termux_train.cli
 ================
 Official Command-Line Interface (CLI) for termux-train.
-Provides diagnostics, environment validation, benchmark scoring, and demo execution.
+Provides diagnostics, environment validation, benchmark scoring, demo execution, and on-device training.
 """
-
-import sys
-import os
-import argparse
-import subprocess
-
-try:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-    if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
 
 import sys
 import os
@@ -298,6 +285,30 @@ def cmd_demo(args):
     subprocess.run([sys.executable, target_script], check=False)
 
 
+def cmd_train(args):
+    """Executes on-device training / LoRA loop via runner.run_session."""
+    from termux_train.runtime.runner import run_session
+
+    cfg = {
+        "modelType": getattr(args, "model", "mlp"),
+        "dataPath": getattr(args, "data", None),
+        "dim": getattr(args, "dim", 32),
+        "loraRank": getattr(args, "rank", 8),
+        "epochs": getattr(args, "epochs", 5),
+        "lr": getattr(args, "lr", 0.001),
+        "batchSize": getattr(args, "batch_size", 16),
+        "seqLen": getattr(args, "seq_len", 32),
+        "backend": getattr(args, "backend", "auto"),
+        "checkpointPath": getattr(args, "checkpoint", None),
+    }
+
+    try:
+        run_session(cfg)
+    except Exception as exc:
+        print(f"[ERROR] Training failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="termux-train",
@@ -335,6 +346,20 @@ def main():
     p_demo = subparsers.add_parser("demo", help="Run an interactive example demo (1 to 8)")
     p_demo.add_argument("demo_number", type=int, help="Demo number (1 to 8)")
     p_demo.set_defaults(func=cmd_demo)
+
+    # train
+    p_train = subparsers.add_parser("train", help="Run on-device training / LoRA loop")
+    p_train.add_argument("--model", type=str, default="mlp", choices=["mlp", "lora", "transformer"], help="Model architecture")
+    p_train.add_argument("--data", type=str, default=None, help="Path to dataset file (.safetensors, .jsonl, .txt)")
+    p_train.add_argument("--dim", type=int, default=32, help="Model hidden/embedding dimension")
+    p_train.add_argument("--rank", type=int, default=8, help="LoRA rank (for lora model)")
+    p_train.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    p_train.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_train.add_argument("--batch-size", type=int, default=16, help="Mini-batch size")
+    p_train.add_argument("--seq-len", type=int, default=32, help="Sequence length (for transformer)")
+    p_train.add_argument("--backend", type=str, default="auto", help="Compute backend (auto, vulkan, numpy, python)")
+    p_train.add_argument("--checkpoint", type=str, default=None, help="Path to save SafeTensors checkpoint")
+    p_train.set_defaults(func=cmd_train)
 
     args = parser.parse_args()
     if args.command is None:
