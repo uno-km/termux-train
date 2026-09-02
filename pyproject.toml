@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "termux-train"
-version = "0.1.0"
+version = "1.0.0"
 description = "Native On-Device Deep Learning & LoRA Training Framework for Android Termux"
 readme = "README.md"
 authors = [{ name = "AMEVA Team", email = "zhfldk014745@naver.com" }]
 license = { text = "Apache-2.0" }
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
