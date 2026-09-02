@@ -166,3 +166,24 @@ def test_matmul_all_rank_combinations_backend_parity():
         np_flat = numpy_backend.to_flat_list(np_result)
         assert python_backend.get_shape(py_result) == numpy_backend.get_shape(np_result)
         assert py_flat == pytest.approx(np_flat, abs=1e-6, rel=1e-6)
+
+
+def test_vulkan_backend_batched_matmul_3d_4d():
+    """Verify VulkanBackend handles 3D and 4D Transformer Attention tensors seamlessly."""
+    import numpy as np
+    from termux_train.backend.vulkan_backend import VulkanBackend
+    vk = VulkanBackend()
+
+    # 3D: (2, 3, 4) @ (2, 4, 5) -> (2, 3, 5)
+    a = np.random.randn(2, 3, 4).astype(np.float32)
+    b = np.random.randn(2, 4, 5).astype(np.float32)
+    res_3d = vk.matmul(a, b)
+    assert res_3d.shape == (2, 3, 5)
+    np.testing.assert_allclose(res_3d, np.matmul(a, b), atol=1e-4)
+
+    # 4D: (2, 4, 8, 16) @ (2, 4, 16, 8) -> (2, 4, 8, 8) (Multi-Head Attention shape)
+    q = np.random.randn(2, 4, 8, 16).astype(np.float32)
+    k = np.random.randn(2, 4, 16, 8).astype(np.float32)
+    res_4d = vk.matmul(q, k)
+    assert res_4d.shape == (2, 4, 8, 8)
+    np.testing.assert_allclose(res_4d, np.matmul(q, k), atol=1e-4)

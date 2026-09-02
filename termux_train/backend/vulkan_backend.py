@@ -87,24 +87,23 @@ class VulkanBackend(BaseBackend):
 
         try:
             doc = Doctor()
-            self._report = doc.run_self_test(verbose=False)
-            if self._report.overall_success:
+            is_ok = doc.quick_probe()
+            from ameva_vulkan_runtime.bindings import AmevaVulkanLib
+            lib = AmevaVulkanLib()
+            if is_ok and lib.is_loaded():
                 self._vulkan_active = True
+                dev_name = doc.quick_probe_device() or "GPU"
                 logger.info(
-                    "[termux-train:VulkanBackend] Vulkan GEMM 가속 활성화. "
-                    "device=%s vendor=0x%04X",
-                    self._report.device_name,
-                    self._report.vendor_id,
+                    "[termux-train:VulkanBackend] Vulkan GEMM 가속 활성화. device=%s",
+                    dev_name,
                 )
             else:
-                passed = self._report.passed_stages
-                total = self._report.total_stages
-                logger.warning(
-                    "[termux-train:VulkanBackend] Vulkan 진단 실패 (%d/%d 단계). "
-                    "NumPy 위임 모드로 실행합니다. device=%s",
-                    passed, total, self._report.device_name,
+                self._vulkan_active = False
+                logger.info(
+                    "[termux-train:VulkanBackend] Vulkan 가속 미지원 환경 (ICD or C HAL 부재) — NumPy 위임 모드로 동작합니다."
                 )
         except Exception as e:
+            self._vulkan_active = False
             logger.warning(
                 "[termux-train:VulkanBackend] Vulkan 초기화 중 예외 발생: %s. "
                 "NumPy 위임 모드로 실행합니다.", e
@@ -147,47 +146,68 @@ class VulkanBackend(BaseBackend):
                 f"(shapes {getattr(a, 'shape', ())} and {getattr(b, 'shape', ())})"
             )
 
-        if self._vulkan_active:
-            return self._vulkan_matmul(a, b)
+        if not self._vulkan_active:
+            return self._delegate.matmul(a, b)
 
-        return self._delegate.matmul(a, b)
-
-    def _vulkan_matmul(self, a: Any, b: Any) -> Any:
-        """실제 Vulkan GEMM 실행.
-
-        현재 단계: ameva-vulkan-runtime 의 C ABI 가 실기기에 배포된 환경에서
-        libameva_vulkan.so 를 통해 GEMM 을 수행합니다.
-        C HAL 미배포 환경(개발 호스트 등)에서는 NumPy 에 자동 위임합니다.
-        """
-        # C HAL 직접 호출 시도
-        try:
-            from ameva_vulkan_runtime.bindings import AmevaVulkanLib
-            lib = AmevaVulkanLib()
-            if lib.is_loaded():
-                # ameva C ABI: ameva_matmul_f32(a_ptr, b_ptr, c_ptr, M, K, N)
-                a_f32 = np.ascontiguousarray(a, dtype=np.float32)
-                b_f32 = np.ascontiguousarray(b, dtype=np.float32)
-                if a_f32.ndim == 2 and b_f32.ndim == 2:
-                    M, K = a_f32.shape
-                    K2, N = b_f32.shape
-                    if K == K2:
-                        c_f32 = np.zeros((M, N), dtype=np.float32)
-                        ret = lib.call_matmul_f32(a_f32, b_f32, c_f32, M, K, N)
-                        if ret == 0:
-                            return c_f32
-                        else:
-                            logger.debug(
-                                "[termux-train:VulkanBackend] ameva_matmul_f32 반환 코드 %d "
-                                "— NumPy 위임으로 폴백.", ret
-                            )
-        except Exception as e:
-            logger.debug(
-                "[termux-train:VulkanBackend] Vulkan GEMM 실행 실패 (%s) "
-                "— NumPy 폴백.", e
+        from ameva_vulkan_runtime.bindings import AmevaVulkanLib
+        lib = AmevaVulkanLib()
+        if not lib.is_loaded():
+            raise RuntimeError(
+                "[termux-train:VulkanBackend] Vulkan backend is active but libameva_vulkan.so C ABI is not loaded. "
+                "Silent CPU fallback is disabled in explicit Vulkan mode."
             )
 
-        # NumPy 폴백 (C HAL 미배포 또는 오류 시)
-        return self._delegate.matmul(a, b)
+        a_f32 = np.ascontiguousarray(a, dtype=np.float32)
+        b_f32 = np.ascontiguousarray(b, dtype=np.float32)
+
+        if a_f32.ndim < 2 or b_f32.ndim < 2:
+            return self._delegate.matmul(a, b)
+
+        # Standard 2D SGEMM
+        if a_f32.ndim == 2 and b_f32.ndim == 2:
+            if a_f32.shape[1] != b_f32.shape[0]:
+                raise ValueError(f"Incompatible matrix dimensions for Vulkan SGEMM: a={a_f32.shape}, b={b_f32.shape}")
+            M, K = a_f32.shape
+            _, N = b_f32.shape
+            c_f32 = np.zeros((M, N), dtype=np.float32)
+            ret = lib.call_matmul_f32(a_f32, b_f32, c_f32, M, K, N)
+            if ret != 0:
+                raise RuntimeError(
+                    f"[termux-train:VulkanBackend] ameva_matmul_f32 returned error code {ret}. "
+                    "Silent CPU fallback is disabled in explicit Vulkan mode."
+                )
+            return c_f32
+
+        # Generalized Batched SGEMM for 3D/4D Transformer Attention (e.g. (B, S, D) or (B, H, S, D))
+        M, K = a_f32.shape[-2], a_f32.shape[-1]
+        K2, N = b_f32.shape[-2], b_f32.shape[-1]
+        if K != K2:
+            raise ValueError(f"Incompatible inner matrix dimensions for Vulkan SGEMM: a={a_f32.shape}, b={b_f32.shape} ({K} != {K2})")
+
+        try:
+            batch_shape = np.broadcast_shapes(a_f32.shape[:-2], b_f32.shape[:-2])
+        except ValueError as e:
+            raise ValueError(f"Incompatible batch dimensions for Vulkan Batched SGEMM: {e}") from e
+
+        a_bc = np.broadcast_to(a_f32, batch_shape + (M, K))
+        b_bc = np.broadcast_to(b_f32, batch_shape + (K, N))
+
+        out_shape = batch_shape + (M, N)
+        c_f32 = np.zeros(out_shape, dtype=np.float32)
+
+        batch_count = int(np.prod(batch_shape)) if len(batch_shape) > 0 else 1
+        a_flat = np.ascontiguousarray(a_bc).reshape(batch_count, M, K)
+        b_flat = np.ascontiguousarray(b_bc).reshape(batch_count, K, N)
+        c_flat = c_f32.reshape(batch_count, M, N)
+
+        for i in range(batch_count):
+            ret = lib.call_matmul_f32(a_flat[i], b_flat[i], c_flat[i], M, K, N)
+            if ret != 0:
+                raise RuntimeError(
+                    f"[termux-train:VulkanBackend] ameva_matmul_f32 returned error code {ret} at batch index {i}. "
+                    "Silent CPU fallback is disabled in explicit Vulkan mode."
+                )
+        return c_f32
 
     # -----------------------------------------------------------------------
     # 모든 나머지 연산 — NumPyBackend 완전 위임
