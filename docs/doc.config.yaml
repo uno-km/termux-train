@@ -1,17 +1,17 @@
 # docs/doc.config.yaml
 name: "Termux-Train"
 package_name_pypi: "termux-train"
-package_name_npm: ""
+package_name_npm: "termux-train"
 version: "v1.0.0"
-release_name: "Stable Release"
+release_name: "Dual-Engine Python & Node.js/TypeScript Support"
 license: "Apache-2.0"
 platform: "Android ARM64 / Termux Bionic"
 github_repo_url: "https://github.com/uno-km/termux-train"
 
-tagline_en: "Ultra-Lightweight On-Device Tensor & DAG Autograd Deep Learning Framework"
-tagline_ko: "SafeTensors 제로 카피 및 LoRA 파인튜닝 지원 경량 온디바이스 DAG Autograd 딥러닝 프레임워크"
+tagline_en: "Ultra-Lightweight On-Device Tensor & DAG Autograd Deep Learning Framework (Dual-Engine Python & Node.js/TypeScript)"
+tagline_ko: "SafeTensors 제로 카피 및 LoRA 파인튜닝 지원 경량 온디바이스 DAG Autograd 딥러닝 프레임워크 (Python & Node.js 듀얼 엔진)"
 
-quick_install_cmd: "pip install termux-train"
+quick_install_cmd: "pip install termux-train # or npm install termux-train"
 
 why_challenge_en: "Training or fine-tuning neural networks on mobile devices with standard deep learning toolchains causes Out-Of-Memory (OOM) crashes and excessive disk paging."
 why_challenge_ko: "표준 딥러닝 툴체인으로 모바일에서 모델을 학습하거나 파인튜닝하면 막대한 프레임워크 오버헤드로 인해 메모리 부족(OOM) 오류가 발생합니다."
@@ -60,5 +60,17 @@ code_example_py: |
       print(f"Epoch {epoch}: Loss = {loss.item():.4f}")
 
 code_example_js: |
-  // Termux-Train is primarily a Python native ML framework.
-  // Models can be exported to standard SafeTensors format for universal deployment.
+  import { TermuxTrainer, runDoctor } from 'termux-train';
+
+  // 1. Hardware & Training Capacity Diagnostics
+  const report = runDoctor();
+  console.log(`Device: ${report.hardware.tier} | Max LoRA Rank: r=${report.recommendedTrainingConfig.loraRank}`);
+
+  // 2. Asynchronous Training Pipeline & Telemetry
+  const trainer = new TermuxTrainer({ loraRank: 8, lr: 1e-3 });
+  trainer.on('step', (metrics) => {
+    console.log(`[Epoch ${metrics.epoch}/${metrics.totalEpochs}] Loss: ${metrics.loss.toFixed(6)}`);
+  });
+
+  await trainer.fit({ epochs: 5 });
+

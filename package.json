@@ -1,0 +1,57 @@
+{
+  "name": "termux-train",
+  "version": "1.0.0",
+  "description": "Native On-Device Deep Learning & LoRA Training Framework for Android Termux & ARM64 (Dual-Engine Python & Node.js/TypeScript)",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "termux-train": "bin/cli.js",
+    "tt": "bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin",
+    "lib",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "test": "node tests/node_smoke.test.js",
+    "doctor": "node bin/cli.js doctor",
+    "benchmark": "node bin/cli.js benchmark"
+  },
+  "keywords": [
+    "termux",
+    "android",
+    "autograd",
+    "deep-learning",
+    "on-device-training",
+    "lora",
+    "transformer",
+    "safetensors",
+    "vulkan",
+    "arm64",
+    "edge-ai",
+    "neural-network",
+    "open-source"
+  ],
+  "author": "uno-km (AMEVA Foundation) <dev@amevafoundation.org>",
+  "license": "Apache-2.0",
+  "homepage": "https://uno-km.vercel.app/lib/train/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uno-km/termux-train.git"
+  },
+  "bugs": {
+    "url": "https://github.com/uno-km/termux-train/issues"
+  },
+  "dependencies": {},
+  "optionalDependencies": {
+    "ameva-vulkan-runtime": ">=1.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
