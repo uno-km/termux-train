@@ -171,6 +171,16 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
                 mmap_ds.close()
                 raise ValueError(f"MMap binary dataset at '{data_path}' has insufficient tokens for seq_len={seq_len}.")
 
+            # Bounded Memory Mobile Guard: Cap single in-memory slice to 2,000,000 samples to prevent mobile OOM
+            MAX_SAFE_MMAP_SAMPLES = 2_000_000
+            if total_samples > MAX_SAFE_MMAP_SAMPLES:
+                print(
+                    f"[INFO] Bounded Memory Guard: Clamping MMap dataset from {total_samples} to "
+                    f"{MAX_SAFE_MMAP_SAMPLES} samples to maintain mobile RAM headroom.",
+                    flush=True
+                )
+                total_samples = MAX_SAFE_MMAP_SAMPLES
+
             # Direct C-level binary buffer extraction: Read all sequence tokens in single slice
             total_needed_tokens = total_samples + seq_len
             raw_bytes = mmap_ds._mmap[8:8 + total_needed_tokens * 8]

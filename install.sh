@@ -7,25 +7,26 @@
 
 set -e
 
-COLLOR_GREEN='\033[0;32m'
+COLOR_GREEN='\033[0;32m'
 COLOR_BLUE='\033[0;34m'
-COLOR_YELLOW='+033[1;33m'
+COLOR_YELLOW='\033[1;33m'
 COLOR_RED='\033[0;31m'
-COLLOR_RESET='\033[0m'
-echo -e "${COLOR_BLUE}===============================================================${COLOR_RESET}"
+COLOR_RESET='\033[0m'
+
+echo -e "${COLOR_BLUE}================================================================${COLOR_RESET}"
 echo -e "${COLOR_BLUE}    termux-train: Universal One-Touch Installation Engine       ${COLOR_RESET}"
-echo -e "${COLOR_BLUE}===============================================================${COLOR_RESET}"
+echo -e "${COLOR_BLUE}================================================================${COLOR_RESET}"
 
 # 1. Environment Detection
 IS_TERMUX=false
 if [ -n "$TERMUX_VERSION" ] || [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=true
-    echo -e "${COLOR_GREEN}[+} Detected Environment: Android Termux${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}[+] Detected Environment: Android Termux${COLOR_RESET}"
 else
     echo -e "${COLOR_GREEN}[+] Detected Environment: Standard Linux / POSIX System${COLOR_RESET}"
 fi
 
-# 2, System Dependencies
+# 2. System Dependencies
 if [ "$IS_TERMUX" = true ]; then
     echo -e "\n${COLOR_BLUE}[1/4] Installing Termux System Packages (Python, NumPy, Node.js, Clang)...${COLOR_RESET}"
     pkg update -y || true
@@ -53,7 +54,7 @@ $PY_CMD -m pip install --upgrade pip setuptools wheel || true
 if [ "$IS_TERMUX" = true ]; then
     $PY_CMD -m pip install -e .
 else
-    $PY_CMD -m pip install -e '[all]' || $PY_CMD -m pip install -e '[accelerated]' || $PY_CMD -m pip install -e .
+    $PY_CMD -m pip install -e ".[all]" || $PY_CMD -m pip install -e ".[accelerated]" || $PY_CMD -m pip install -e .
 fi
 
 # 5. Node.js SDK Link
