@@ -16,8 +16,9 @@ try:
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+except (AttributeError, OSError) as rec_err:
+        sys.stderr.write(f'[termux-train] Notice: stream reconfigure failed: {rec_err}
+')
 
 # Set project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

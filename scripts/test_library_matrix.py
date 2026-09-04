@@ -16,8 +16,9 @@ import json
 if sys.stdout.encoding != 'utf-8':
     try:
         sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+    except (AttributeError, OSError) as rec_err:
+        sys.stderr.write(f'[termux-train] Notice: stream reconfigure failed: {rec_err}
+')
 
 LIBRARIES_TO_CHECK = [
     {

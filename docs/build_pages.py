@@ -11,8 +11,9 @@ try:
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
-    pass
+except (AttributeError, OSError) as rec_err:
+        sys.stderr.write(f'[termux-train] Notice: stream reconfigure failed: {rec_err}
+')
 
 DOCS_DIR = os.path.dirname(os.path.abspath(__file__))
 SITE_URL = "https://uno-km.github.io/termux-train"
