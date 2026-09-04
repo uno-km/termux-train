@@ -143,13 +143,26 @@ def save_safetensors(
                 shutil.move(tmp_path, filepath)
             else:
                 raise
-    except Exception as e:
+    except Exception as primary_err:
+        # P0-6: 임시 파일 삭제 실패도 보존하여 상위에 전달
+        cleanup_err: Exception | None = None
         if os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
-            except Exception:
-                pass
-        raise IOError(f"Failed to atomically write safetensors to {filepath}: {e}") from e
+            except Exception as _cleanup_exc:
+                cleanup_err = _cleanup_exc
+
+        if cleanup_err is not None:
+            # 주 오류 + 클린업 오류 모두 메시지에 포함
+            raise IOError(
+                f"Failed to atomically write safetensors to {filepath}: {primary_err!r}. "
+                f"Additionally, cleanup of temp file '{tmp_path}' failed: {cleanup_err!r}. "
+                f"Quarantined path: {tmp_path}"
+            ) from primary_err
+
+        raise IOError(
+            f"Failed to atomically write safetensors to {filepath}: {primary_err}"
+        ) from primary_err
 
 
 def load_safetensors(

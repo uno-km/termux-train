@@ -22,7 +22,8 @@ try:
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
+except (AttributeError, OSError):
+    # stdout/stderr 재설정 실패 시 계속 진행 — 콘솔 인코딩 차이로 인한 비치명적 실패
     pass
 
 import termux_train as tt

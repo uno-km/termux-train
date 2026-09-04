@@ -91,6 +91,10 @@ class TrainControl(ComponentControl):
         }
 
     def _check_pid(self) -> tuple[int | None, bool]:
+        """P0-5: 상태 파일 기반 Training Worker PID 활성 여부. 'pid 없음'과 '검사 실패' 구분."""
+        import logging
+        _log = logging.getLogger(__name__)
+
         state_data = self._state_file.read()
         if state_data:
             pid = state_data.get("process", {}).get("pid")
@@ -98,7 +102,13 @@ class TrainControl(ComponentControl):
                 try:
                     os.kill(pid, 0)
                     return pid, True
-                except Exception:
+                except ProcessLookupError:
+                    return pid, False
+                except PermissionError as perm_err:
+                    _log.warning("[train] Worker PID %d PermissionError: %s", pid, perm_err)
+                    return pid, False
+                except OSError as os_err:
+                    _log.warning("[train] Worker PID %d OSError: %s", pid, os_err)
                     return pid, False
         return None, False
 
