@@ -65,6 +65,10 @@ all = [
 [project.scripts]
 termux-train = "termux_train.cli:main"
 
+[project.entry-points."ameva.components"]
+termux-train = "termux_train.adapter:create_adapter"
+
+
 [project.urls]
 Homepage = "https://github.com/uno-km/termux-train"
 Documentation = "https://github.com/uno-km/termux-train#readme"
