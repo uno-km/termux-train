@@ -17,7 +17,8 @@ try:
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
+except (AttributeError, OSError):
+    # Non-fatal console encoding setup fallback
     pass
 
 from termux_train import randn, get_backend

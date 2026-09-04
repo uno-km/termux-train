@@ -83,12 +83,19 @@ def save_lora_adapter(
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, filepath)
-        except Exception:
+        except Exception as primary_err:
+            cleanup_err: Exception | None = None
             if os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
-                except OSError:
-                    pass
+                except OSError as _clean_exc:
+                    cleanup_err = _clean_exc
+            if cleanup_err is not None:
+                raise IOError(
+                    f"Failed writing LoRA adapter to '{filepath}': {primary_err!r}. "
+                    f"Additionally, cleanup of temp file failed: {cleanup_err!r}. "
+                    f"Quarantined path: {tmp_path}"
+                ) from primary_err
             raise
 
     return filepath

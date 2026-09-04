@@ -66,21 +66,33 @@ class TrainControl(ComponentControl):
         ts = now_timestamps()
         state_data = self._state_file.read()
         stale = self._state_file.is_stale(threshold_ms=30_000)
-        pid, pid_alive = self._check_pid()
+        pid_info = self._check_pid()
+        pid = pid_info.get("pid")
+        pid_alive = pid_info.get("alive")
         instances = self._inst_reg.list_all()
         busy = [i for i in instances if i.state == InstanceState.BUSY]
 
         # 백엔드 가용 여부만 (실제 훈련 실행 금지)
         backend_info = self._check_backend()
         ready = any(backend_info.values())
-        degraded = stale or not any(backend_info.values())
+        degraded = stale or not any(backend_info.values()) or (pid_alive is False) or (pid_info.get("verified") is False and pid is not None)
+
+        proc_dict: dict[str, Any] = {
+            "running": pid_alive,
+            "pid": pid,
+            "verified": pid_info.get("verified", False),
+        }
+        if "inspection_error" in pid_info:
+            proc_dict["inspection_error"] = pid_info["inspection_error"]
+        if "reason" in pid_info:
+            proc_dict["reason"] = pid_info["reason"]
 
         return {
             "protocol": "ameva-component-status/1",
             "component_id": self.COMPONENT_ID, "component_type": self.COMPONENT_TYPE,
             "version": self._get_version(), "ready": ready, "degraded": degraded,
             **ts,
-            "process": {"running": pid_alive, "pid": pid},
+            "process": proc_dict,
             "capabilities": list(self.CAPABILITIES),
             "training_workers": len(instances),
             "active_training_runs": len(busy),
@@ -90,8 +102,9 @@ class TrainControl(ComponentControl):
                            "updated_at": state_data.get("updated_at") if state_data else None},
         }
 
-    def _check_pid(self) -> tuple[int | None, bool]:
-        """P0-5: 상태 파일 기반 Training Worker PID 활성 여부. 'pid 없음'과 '검사 실패' 구분."""
+    def _check_pid(self) -> dict[str, Any]:
+        """BLOCKER 1: 상태 파일 기반 Training Worker PID 활성 여부 확인.
+        PermissionError/OSError 발생 시 alive=None, verified=False, inspection_error 반환."""
         import logging
         _log = logging.getLogger(__name__)
 
@@ -101,16 +114,42 @@ class TrainControl(ComponentControl):
             if pid:
                 try:
                     os.kill(pid, 0)
-                    return pid, True
+                    return {"pid": pid, "alive": True, "verified": True}
                 except ProcessLookupError:
-                    return pid, False
+                    return {
+                        "pid": pid,
+                        "alive": False,
+                        "verified": True,
+                        "reason": "process_lookup_failed",
+                    }
                 except PermissionError as perm_err:
                     _log.warning("[train] Worker PID %d PermissionError: %s", pid, perm_err)
-                    return pid, False
+                    return {
+                        "pid": pid,
+                        "alive": None,
+                        "verified": False,
+                        "inspection_error": {
+                            "code": "PROCESS_INSPECTION_PERMISSION_DENIED",
+                            "message": str(perm_err),
+                        },
+                    }
                 except OSError as os_err:
                     _log.warning("[train] Worker PID %d OSError: %s", pid, os_err)
-                    return pid, False
-        return None, False
+                    return {
+                        "pid": pid,
+                        "alive": None,
+                        "verified": False,
+                        "inspection_error": {
+                            "code": "PROCESS_INSPECTION_OS_ERROR",
+                            "message": str(os_err),
+                        },
+                    }
+        return {
+            "pid": None,
+            "alive": False,
+            "verified": True,
+            "reason": "pid_file_missing",
+        }
 
     def _check_backend(self) -> dict:
         result = {}

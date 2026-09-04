@@ -100,8 +100,9 @@ class MMapTokenDataset:
         if os.path.exists(self.filepath):
             try:
                 os.remove(self.filepath)
-            except Exception:
-                pass
+            except OSError as _rm_err:
+                import logging
+                logging.getLogger(__name__).warning("MMapTokenDataset unlink error on '%s': %s", self.filepath, _rm_err)
 
     def __enter__(self) -> 'MMapTokenDataset':
         return self
@@ -135,12 +136,19 @@ class MMapTokenDataset:
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(tmp_path, filepath)
-        except Exception:
+        except Exception as primary_err:
+            cleanup_err: Exception | None = None
             if os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
-                except Exception:
-                    pass
+                except OSError as _clean_exc:
+                    cleanup_err = _clean_exc
+            if cleanup_err is not None:
+                raise IOError(
+                    f"Failed creating dataset '{filepath}': {primary_err!r}. "
+                    f"Additionally, temp cleanup failed: {cleanup_err!r}. "
+                    f"Quarantined path: {tmp_path}"
+                ) from primary_err
             raise
 
         return cls(filepath=filepath, seq_len=seq_len, backend=backend)

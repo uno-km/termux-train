@@ -17,7 +17,8 @@ try:
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
+except (AttributeError, OSError):
+    # Non-fatal console encoding setup fallback
     pass
 
 from termux_train import __version__, available_backends, get_backend, set_backend, Tensor, randn, nn
@@ -73,8 +74,9 @@ def cmd_doctor(args):
     try:
         import psutil
         ram_mb = int(psutil.virtual_memory().total / (1024 * 1024))
-    except Exception:
-        pass
+    except (ImportError, OSError, AttributeError) as _ps_err:
+        import logging
+        logging.getLogger(__name__).debug("psutil memory inspection unavailable: %s", _ps_err)
 
     if ram_mb <= 0 and os.path.exists("/proc/meminfo"):
         try:
@@ -85,8 +87,9 @@ def cmd_doctor(args):
                         if len(parts) >= 2 and parts[1].isdigit():
                             ram_mb = int(parts[1]) // 1024
                         break
-        except Exception:
-            pass
+        except (OSError, ValueError) as _mem_err:
+            import logging
+            logging.getLogger(__name__).debug("/proc/meminfo read failed: %s", _mem_err)
 
     if ram_mb <= 0:
         ram_mb = 4096  # Baseline fallback if kernel information is unreadable

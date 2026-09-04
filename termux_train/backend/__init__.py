@@ -27,18 +27,21 @@ try:
     from .numpy_backend import NumPyBackend, NUMPY_AVAILABLE
     if NUMPY_AVAILABLE:
         _BACKENDS["numpy"] = NumPyBackend()
-except ImportError:
-    pass
+except ImportError as _np_err:
+    import logging
+    logging.getLogger(__name__).debug("numpy backend unavailable (%s), using pure-python", _np_err)
 
 # [신규] VulkanBackend — ameva-vulkan-runtime 설치 시 자동 활성화
 # pip install termux-train[vulkan]  또는  pip install ameva-vulkan-runtime
 try:
     from .vulkan_backend import VulkanBackend
     _BACKENDS["vulkan"] = VulkanBackend()
-except ImportError:
-    pass  # ameva-vulkan-runtime 미설치 → vulkan 백엔드 비노출 (정상 동작)
-except Exception:
-    pass  # VulkanBackend 초기화 실패 → 비노출 (NumPy 폴백)
+except ImportError as _vk_imp_err:
+    import logging
+    logging.getLogger(__name__).debug("vulkan backend not installed: %s", _vk_imp_err)
+except (RuntimeError, OSError) as _vk_init_err:
+    import logging
+    logging.getLogger(__name__).warning("vulkan backend initialization failed (%s); falling back to CPU", _vk_init_err)
 
 # Default: vulkan > numpy > python
 def _select_default() -> str:
