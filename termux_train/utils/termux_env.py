@@ -5,7 +5,7 @@ Platform and Operating Environment Identification for Android Termux.
 
 변경 이력:
 - [PATCH] vulkan_available 체크 추가: /system/lib64/libvulkan.so 존재 여부 탐지.
-  ameva-vulkan-runtime 설치 전 사전 환경 점검 시 사용됩니다.
+  ameva-runtime 설치 전 사전 환경 점검 시 사용됩니다.
 - [PATCH] get_cpu_info() / get_storage_info() 의 except:pass 묵음 패턴 제거.
   모든 실패는 [termux-train] 태그와 함께 logging.debug 에 기록됩니다.
 """
@@ -20,7 +20,7 @@ from typing import Any, Dict
 logger = logging.getLogger("termux_train.utils.termux_env")
 
 
-# [B방안] Platform SSOT: ameva-vulkan-runtime.platform 에서 공유 구현을 가져옵니다.
+# [B방안] Platform SSOT: ameva-runtime.platform 에서 공유 구현을 가져옵니다.
 try:
     from ameva_runtime.vulkan.platform import (
         is_android as _ameva_is_android,
@@ -34,7 +34,7 @@ except ImportError:
 def is_android() -> bool:
     """Check if the current runtime is running on Android.
 
-    [B방안] ameva-vulkan-runtime.platform.is_android() 를 SSOT 로 사용합니다.
+    [B방안] ameva-runtime.platform.is_android() 를 SSOT 로 사용합니다.
     """
     if _AMEVA_PLATFORM_AVAILABLE:
         return _ameva_is_android()
@@ -48,7 +48,7 @@ def is_android() -> bool:
 def is_termux() -> bool:
     """Check if running specifically inside the Termux native environment.
 
-    [B방안] ameva-vulkan-runtime.platform.is_termux() 를 SSOT 로 사용합니다.
+    [B방안] ameva-runtime.platform.is_termux() 를 SSOT 로 사용합니다.
     """
     if _AMEVA_PLATFORM_AVAILABLE:
         return _ameva_is_termux()
@@ -63,7 +63,7 @@ def is_termux() -> bool:
 def check_vulkan_available() -> bool:
     """Android Bionic ICD 기반 Vulkan 드라이버 가용성을 확인합니다.
 
-    탐색 순서는 ameva-vulkan-runtime 의 ICD 정책과 동일합니다:
+    탐색 순서는 ameva-runtime 의 ICD 정책과 동일합니다:
     시스템 ICD 우선, Termux Mesa fallback.
 
     Returns:
@@ -144,7 +144,7 @@ def get_device_info() -> Dict[str, Any]:
         storage             : 저장소 정보 dict (total_gb, used_gb, free_gb)
         opencl_available    : OpenCL ICD 파일 존재 여부
         vulkan_available    : Android Bionic Vulkan ICD 파일 존재 여부
-                              (ameva-vulkan-runtime 설치 전 사전 환경 점검용)
+                              (ameva-runtime 설치 전 사전 환경 점검용)
     """
     return {
         "is_android": is_android(),
@@ -158,6 +158,6 @@ def get_device_info() -> Dict[str, Any]:
             os.path.exists("/system/vendor/lib64/libOpenCL.so")
             or os.path.exists("/vendor/lib64/libOpenCL.so")
         ),
-        # [신규] Vulkan ICD 가용성 — ameva-vulkan-runtime 연동 전제조건 확인
+        # [신규] Vulkan ICD 가용성 — ameva-runtime 연동 전제조건 확인
         "vulkan_available": check_vulkan_available(),
     }

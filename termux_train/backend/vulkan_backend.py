@@ -4,7 +4,7 @@ termux_train.backend.vulkan_backend
 Vulkan GPU 가속 Compute Backend — BaseBackend ABC 준수 구현.
 
 아키텍처 전략:
-- matmul() (역전파 포함 핵심 GEMM): ameva-vulkan-runtime 의 VulkanContext 를 통해 GPU 오프로딩.
+- matmul() (역전파 포함 핵심 GEMM): ameva-runtime 의 VulkanContext 를 통해 GPU 오프로딩.
 - 그 외 모든 연산 (elementwise, activation 등): NumPyBackend 에 위임(Delegation).
   Vulkan compute shader 가 없는 연산에 대해 별도 커널 개발 없이 즉시 사용 가능.
 
@@ -19,7 +19,7 @@ Vulkan GPU 가속 Compute Backend — BaseBackend ABC 준수 구현.
     set_backend('vulkan')           # Vulkan 가속 활성화 (불가 시 자동 폴백)
 
 의존성:
-    - ameva-vulkan-runtime >= 1.0.0  (pip install termux-train[vulkan])
+    - ameva-runtime >= 1.0.0  (pip install termux-train[vulkan])
     - numpy >= 1.20.0
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ except ImportError:
     _NUMPY_AVAILABLE = False
     np = None  # type: ignore
 
-# ameva-vulkan-runtime — optional 의존성. 없으면 CPU NumPy 폴백.
+# ameva-runtime — optional 의존성. 없으면 CPU NumPy 폴백.
 try:
     from ameva_runtime.vulkan.doctor import Doctor, DiagnosticReport
     _AMEVA_AVAILABLE = True
@@ -53,7 +53,7 @@ except ImportError:
 class VulkanBackend(BaseBackend):
     """Vulkan GPU 가속 Compute Backend.
 
-    matmul() 은 ameva-vulkan-runtime 의 Vulkan GEMM 컨텍스트로 처리하고,
+    matmul() 은 ameva-runtime 의 Vulkan GEMM 컨텍스트로 처리하고,
     나머지 연산은 NumPyBackend 에 완전히 위임합니다.
 
     Vulkan 불가 환경에서는 자동으로 NumPy 전용 모드로 투명하게 동작합니다.

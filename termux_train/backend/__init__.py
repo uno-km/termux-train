@@ -9,7 +9,7 @@ Backend 우선순위 (set_backend('auto')):
 사용 방법:
     from termux_train import set_backend
     set_backend('auto')    # Vulkan 자동 선택 (없으면 numpy)
-    set_backend('vulkan')  # Vulkan 강제 (ameva-vulkan-runtime 필요)
+    set_backend('vulkan')  # Vulkan 강제 (ameva-runtime 필요)
     set_backend('numpy')   # NumPy NEON
     set_backend('python')  # 순수 Python
 """
@@ -31,8 +31,8 @@ except ImportError as _np_err:
     import logging
     logging.getLogger(__name__).debug("numpy backend unavailable (%s), using pure-python", _np_err)
 
-# [신규] VulkanBackend — ameva-vulkan-runtime 설치 시 자동 활성화
-# pip install termux-train[vulkan]  또는  pip install ameva-vulkan-runtime
+# [신규] VulkanBackend — ameva-runtime 설치 시 자동 활성화
+# pip install termux-train[vulkan]  또는  pip install ameva-runtime
 try:
     from .vulkan_backend import VulkanBackend
     _BACKENDS["vulkan"] = VulkanBackend()
