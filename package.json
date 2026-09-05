@@ -49,7 +49,7 @@
   },
   "dependencies": {},
   "optionalDependencies": {
-    "ameva-vulkan-runtime": ">=1.0.0"
+    "@ameva/runtime": ">=2.0.0"
   },
   "engines": {
     "node": ">=16.0.0"

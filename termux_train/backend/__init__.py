@@ -65,7 +65,7 @@ def get_backend(name: Optional[str] = None) -> BaseBackend:
         if name_clean not in _BACKENDS:
             _msg = f"Backend '{name}' is not available. Available: {available_backends()}"
             if name_clean == "vulkan":
-                _msg += "\n[Action] pip install ameva-vulkan-runtime  또는  pip install termux-train[vulkan]"
+                _msg += "\n[Action] pip install ameva-runtime  또는  pip install termux-train[vulkan]"
             raise ValueError(_msg)
         return _BACKENDS[name_clean]
     current = _ACTIVE_BACKEND_VAR.get()
@@ -91,7 +91,7 @@ def set_backend(name: str = "auto") -> BaseBackend:
     if name_clean not in _BACKENDS:
         _msg = f"Backend '{name}' is not available. Available: {available_backends()} or 'auto'"
         if name_clean == "vulkan":
-            _msg += "\n[Action] pip install ameva-vulkan-runtime  또는  pip install termux-train[vulkan]"
+            _msg += "\n[Action] pip install ameva-runtime  또는  pip install termux-train[vulkan]"
         raise ValueError(_msg)
     _ACTIVE_BACKEND_VAR.set(name_clean)
     return _BACKENDS[name_clean]

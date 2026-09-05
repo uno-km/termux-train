@@ -46,7 +46,7 @@ dependencies = [
 accelerated = ["numpy>=1.20.0"]
 # [신규] Vulkan GPU 가속 그룹 — ameva-vulkan-runtime 연동 시 사용
 # pip install termux-train[vulkan]
-vulkan = ["ameva-vulkan-runtime>=1.0.0"]
+vulkan = ["ameva-runtime>=2.0.0"]
 test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -59,7 +59,7 @@ dev = [
 ]
 all = [
     "numpy>=1.20.0",
-    "ameva-vulkan-runtime>=1.0.0",
+    "ameva-runtime>=2.0.0",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]

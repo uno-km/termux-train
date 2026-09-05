@@ -42,7 +42,7 @@ except ImportError:
 
 # ameva-vulkan-runtime — optional 의존성. 없으면 CPU NumPy 폴백.
 try:
-    from ameva_vulkan_runtime.doctor import Doctor, DiagnosticReport
+    from ameva_runtime.vulkan.doctor import Doctor, DiagnosticReport
     _AMEVA_AVAILABLE = True
 except ImportError:
     _AMEVA_AVAILABLE = False
@@ -79,7 +79,7 @@ class VulkanBackend(BaseBackend):
         """ameva Doctor 를 실행하여 Vulkan 가속 가능 여부를 계측합니다."""
         if not _AMEVA_AVAILABLE:
             logger.warning(
-                "[termux-train:VulkanBackend] ameva-vulkan-runtime 이 설치되지 않았습니다. "
+                "[termux-train:VulkanBackend] ameva-runtime 이 설치되지 않았습니다. "
                 "NumPy 위임 모드로 실행합니다. "
                 "Vulkan 가속을 활성화하려면: pip install termux-train[vulkan]"
             )
@@ -88,7 +88,7 @@ class VulkanBackend(BaseBackend):
         try:
             doc = Doctor()
             is_ok = doc.quick_probe()
-            from ameva_vulkan_runtime.bindings import AmevaVulkanLib
+            from ameva_runtime.vulkan.bindings import AmevaVulkanLib
             lib = AmevaVulkanLib()
             if is_ok and lib.is_loaded():
                 self._vulkan_active = True
@@ -149,7 +149,7 @@ class VulkanBackend(BaseBackend):
         if not self._vulkan_active:
             return self._delegate.matmul(a, b)
 
-        from ameva_vulkan_runtime.bindings import AmevaVulkanLib
+        from ameva_runtime.vulkan.bindings import AmevaVulkanLib
         lib = AmevaVulkanLib()
         if not lib.is_loaded():
             raise RuntimeError(

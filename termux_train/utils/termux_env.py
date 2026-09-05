@@ -22,7 +22,7 @@ logger = logging.getLogger("termux_train.utils.termux_env")
 
 # [B방안] Platform SSOT: ameva-vulkan-runtime.platform 에서 공유 구현을 가져옵니다.
 try:
-    from ameva_vulkan_runtime.platform import (
+    from ameva_runtime.vulkan.platform import (
         is_android as _ameva_is_android,
         is_termux as _ameva_is_termux,
     )
