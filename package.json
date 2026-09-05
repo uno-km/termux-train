@@ -1,6 +1,6 @@
 {
   "name": "termux-train",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "On-device deep learning & LoRA training framework utilizing device resources for Android Termux & ARM64",
   "main": "index.js",
   "types": "index.d.ts",

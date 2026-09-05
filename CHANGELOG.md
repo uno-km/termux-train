@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.5] - 2026-09-05
+
+### Changed
+- Aligned Vulkan compute engine docstrings and dependency specifications with ameva-runtime.
+- Standardized environment inspection and ICD discovery documentation.
+
+---
+
 ## [1.1.4] - 2026-09-05
 
 ### Changed
