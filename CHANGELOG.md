@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.4] - 2026-09-05
+
+### Changed
+- Migrated hardware acceleration dependency to unified `ameva-runtime>=2.0.0` and `@ameva/runtime>=2.0.0`.
+- Standardized Vulkan compute backend delegation and installation instructions.
+
+---
+
 ## [1.1.0] - 2026-09-02 (Production Dual-Engine & Secure MMap Release)
 
 ### Added
