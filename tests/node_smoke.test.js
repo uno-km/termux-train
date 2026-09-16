@@ -45,8 +45,10 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   ].join('\n');
 
   fs.writeFileSync(scriptPath, script, 'utf-8');
+  const rootDir = path.resolve(__dirname, '..');
+  const env = { ...process.env, PYTHONPATH: rootDir + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '') };
   try {
-    const res = spawnSync(pyCmd, [scriptPath, filePath], { stdio: 'pipe', encoding: 'utf-8' });
+    const res = spawnSync(pyCmd, [scriptPath, filePath], { stdio: 'pipe', encoding: 'utf-8', env });
     if (res.status !== 0) {
       throw new Error(`Dataset generation failed: ${res.stderr || res.stdout}`);
     }
