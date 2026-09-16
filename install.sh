@@ -49,7 +49,7 @@ fi
 
 # 4. Python Package Installation
 echo -e "\n${COLOR_BLUE}[2/4] Installing Python termux-train Engine & Dependencies...${COLOR_RESET}"
-$PY_CMD -m pip install --upgrade pip setuptools wheel || true
+$PY_CMD -m pip install setuptools wheel || true
 
 if [ "$IS_TERMUX" = true ]; then
     $PY_CMD -m pip install -e .
