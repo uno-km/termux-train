@@ -43,8 +43,21 @@ except (RuntimeError, OSError) as _vk_init_err:
     import logging
     logging.getLogger(__name__).warning("vulkan backend initialization failed (%s); falling back to CPU", _vk_init_err)
 
-# Default: vulkan > numpy > python
+# [신규] AmudaBackend — ameva-compute (AMUDA) 설치 시 자동 활성화
+try:
+    from .amuda_backend import AmudaBackend
+    _BACKENDS["amuda"] = AmudaBackend()
+except ImportError as _amuda_imp_err:
+    import logging
+    logging.getLogger(__name__).debug("amuda backend not installed: %s", _amuda_imp_err)
+except (RuntimeError, OSError) as _amuda_init_err:
+    import logging
+    logging.getLogger(__name__).warning("amuda GPU backend init failed (%s); falling back", _amuda_init_err)
+
+# Default: amuda > vulkan > numpy > python
 def _select_default() -> str:
+    if "amuda" in _BACKENDS:
+        return "amuda"
     if "vulkan" in _BACKENDS:
         return "vulkan"
     if "numpy" in _BACKENDS:
