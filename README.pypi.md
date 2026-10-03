@@ -1,68 +1,68 @@
-﻿# termux-train (AMEVA-Termux)
+# Termux-Train (Python)
 
-> **Native On-Device Deep Learning & LoRA Training Framework for Android Termux**  
-> *Zero PyTorch Dependency · Pure Python Autograd Core · Pluggable NumPy Acceleration · Mobile-Resilient Runtime · On-Device LoRA · SafeTensors · RoPE Transformer*
+[![PyPI](https://img.shields.io/pypi/v/termux-train.svg?style=flat-square&color=0369a1)](https://pypi.org/project/termux-train/)
+[![Python](https://img.shields.io/pypi/pyversions/termux-train.svg?style=flat-square)](https://pypi.org/project/termux-train/)
+[![License](https://img.shields.io/badge/License-Apache_2.0-004499.svg?style=flat-square)](https://github.com/uno-km/termux-train)
 
----
+> Unified Multimodal On-Device Deep Learning & LoRA Training Framework for Android Termux with 6-Modality Adapters (LLM, Diffusion, VLM, STT, TTS, BitNet), GPU Slicing, and 44GB Disaggregated Cluster Virtual RAM Pooling.
 
-## What is termux-train?
+## Installation
 
-	ermux-train (also known as AMEVA-Termux) is a lightweight, self-contained deep learning and automatic differentiation (Autograd) training engine built specifically for **Android Termux native environments** and resource-constrained edge devices.
-
-While standard mobile ML frameworks (TFLite, ONNX Runtime Mobile, ExecuTorch, NCNN) only support inference, 	ermux-train enables **full on-device training, backpropagation, RoPE Transformers, and LoRA fine-tuning** directly on smartphone hardware without requiring heavy PyTorch binaries or PRoot container virtualization.
-
----
-
-## 5-Minute Quickstart
-
-### 1. Installation
-
-`ash
-# In Android Termux:
-pkg update && pkg install python python-numpy git
+```bash
 pip install termux-train
-`
+```
 
-### 2. End-to-End On-Device Training (Python SDK)
+## Python Quickstart
 
-`python
+```python
 import termux_train as tt
-import termux_train.nn as nn
-import termux_train.optim as optim
 
-# 1. Define Model Architecture
-class MLP(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(4, 16)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(16, 1)
+# 1. Diffusion LoRA Training
+tt.diffusion.train_diffusion_lora(
+    image_dir="./training_images",
+    output_path="./adapter_diffusion.safetensors",
+    prompt="industrial technical illustration",
+    resolution=512,
+    epochs=5,
+    lr=0.0001,
+    rank=8,
+    backend="vulkan"
+)
 
-    def forward(self, x):
-        return self.fc2(self.relu(self.fc1(x)))
+# 2. Vision VLM LoRA Training
+tt.vision.train_vision_vlm_lora(
+    data_source="./vlm_dataset.jsonl",
+    output_path="./adapter_vision.safetensors",
+    epochs=3,
+    backend="vulkan"
+)
+```
 
-model = MLP()
-criterion = nn.MSELoss()
-optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+## CLI Usage
 
-# 2. Synthetic Data
-x_train = tt.randn(32, 4)
-y_train = tt.randn(32, 1)
+```bash
+# Diffusion LoRA
+termux-train diffusion-train --image-dir ./images --output ./adapter.safetensors --epochs 5
 
-# 3. Training Loop with Autograd
-for epoch in range(10):
-    optimizer.zero_grad()
-    predictions = model(x_train)
-    loss = criterion(predictions, y_train)
-    loss.backward()
-    optimizer.step()
-    print(f"Epoch {epoch+1:02d} | Loss: {loss.item():.6f}")
-`
+# Vision VLM LoRA
+termux-train vision-train --data ./vlm.jsonl --output ./vlm_adapter.safetensors --epochs 3
 
----
+# Whisper STT LoRA
+termux-train stt-train --data ./audio.jsonl --output ./stt_adapter.safetensors --epochs 4
 
-## Official Documentation & Portal
+# TTS Style LoRA
+termux-train tts-train --data ./speech.jsonl --output ./tts_adapter.safetensors --epochs 5
 
-- **Official Web Documentation**: [https://uno-km.vercel.app/lib/train/](https://uno-km.vercel.app/lib/train/)
-- **GitHub Repository**: [https://github.com/uno-km/termux-train](https://github.com/uno-km/termux-train)
-- **License**: Apache-2.0
+# LLM LoRA with GPU Slicing
+termux-train train --model tiny-transformer --data ./corpus.txt --vocab-slice 4096 --chunk-layers 2
+
+# Cluster Worker
+termux-train cluster-worker --port 50052 --guard-band 300
+```
+
+## Documentation & Repository
+- Official Documentation: https://uno-km.vercel.app/lib/train/
+- GitHub Repository: https://github.com/uno-km/termux-train
+
+## License
+Apache-2.0 License. Copyright (c) 2026 Eunho Kim (@uno-km).

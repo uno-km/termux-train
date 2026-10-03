@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software in your research or mobile systems, please cite it as below."
+title: "termux-train: Unified Multimodal On-Device Deep Learning & Cluster Virtual RAM Pooling Engine"
+version: 2.0.0
+date-released: 2026-10-03
+url: "https://github.com/uno-km/termux-train"
+authors:
+  - family-names: "Kim"
+    given-names: "Eunho"
+    email: "zhfldk014745@naver.com"
+keywords:
+  - "on-device-learning"
+  - "lora"
+  - "dora"
+  - "diffusion"
+  - "vlm"
+  - "whisper-stt"
+  - "tts"
+  - "virtual-ram-pooling"
+  - "android-termux"
+  - "safetensors"
+license: "Apache-2.0"
