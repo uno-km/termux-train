@@ -33,7 +33,8 @@ def _ensure_amuda():
         _amuda_available = True
         return True
     except Exception as e:
-        print(f"[AmudaBackend] GPU init failed: {e}. Falling back to NumPy.")
+        import logging
+        logging.getLogger("termux_train.backend.amuda").debug("GPU init failed: %s. Falling back to NumPy.", e)
         _amuda_available = False
         return False
 

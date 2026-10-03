@@ -34,6 +34,7 @@ from .lora import (
     merge_lora_adapters,
     unmerge_lora_adapters,
 )
+from .dora import DoRALinear
 from .utils import clip_grad_norm_
 
 # Alias
@@ -66,6 +67,7 @@ __all__ = [
     "cross_entropy_loss",
     "CrossEntropyLoss",
     "LoRALinear",
+    "DoRALinear",
     "adapter_parameters",
     "named_adapter_parameters",
     "adapter_state_dict",

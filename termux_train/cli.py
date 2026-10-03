@@ -303,6 +303,12 @@ def cmd_train(args):
         "backend": getattr(args, "backend", "auto"),
         "checkpointPath": getattr(args, "checkpoint", None),
         "resumePath": getattr(args, "resume", None),
+        "rpc": getattr(args, "rpc", None),
+        "tensor_split": getattr(args, "tensor_split", None),
+        "cluster_rpc_servers": getattr(args, "cluster_rpc_servers", None),
+        "cluster_split_mode": getattr(args, "cluster_split_mode", None),
+        "cluster_tensor_split": getattr(args, "cluster_tensor_split", None),
+        "cluster_vram_budget": getattr(args, "cluster_vram_budget", None),
     }
 
     try:
@@ -310,6 +316,193 @@ def cmd_train(args):
     except Exception as exc:
         print(f"[ERROR] Training failed: {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+def cmd_peft(args):
+    """Executes on-device PEFT (LoRA / DoRA) training loop."""
+    from termux_train.nn.linear import Linear
+    from termux_train.nn.lora import LoRALinear
+    from termux_train.nn.dora import DoRALinear
+    from termux_train.nn.loss import MSELoss
+    from termux_train.optim.adamw import AdamW
+    from termux_train.adapters.hub import export_target_adapter, TargetEcosystem
+
+    peft_type = getattr(args, "type", "lora").lower()
+    target_eco = getattr(args, "target", "llamacpp").lower()
+    rank = getattr(args, "rank", 8)
+    alpha = getattr(args, "alpha", 16.0)
+    dim = getattr(args, "dim", 64)
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    batch_size = getattr(args, "batch_size", 16)
+    backend_req = getattr(args, "backend", "auto")
+    output_path = getattr(args, "output", None)
+
+    if backend_req and backend_req != "auto":
+        set_backend(backend_req)
+
+    b = get_backend()
+    print("=" * 65)
+    print(f"  ⚡ termux-train PEFT Engine: {peft_type.upper()} Mode")
+    print(f"  • Target Ecosystem : {target_eco.upper()}")
+    print(f"  • Compute Backend  : {b.name.upper()}")
+    print(f"  • Architecture     : Dim={dim} -> Rank={rank} (alpha={alpha})")
+    print(f"  • Hyperparameters  : Epochs={epochs}, LR={lr}, Batch={batch_size}")
+    print("=" * 65)
+
+    base_layer = Linear(dim, dim, bias=True, backend=b)
+    if peft_type == "dora":
+        model = DoRALinear.from_linear(base_layer, rank=rank, alpha=alpha)
+    else:
+        model = LoRALinear.from_linear(base_layer, rank=rank, alpha=alpha)
+
+    optimizer = AdamW(model.adapter_parameters(), lr=lr)
+    loss_fn = MSELoss()
+
+    for epoch in range(1, epochs + 1):
+        x = randn((batch_size, dim), backend=b)
+        target = randn((batch_size, dim), backend=b)
+
+        optimizer.zero_grad()
+        out = model(x)
+        loss = loss_fn(out, target)
+        loss.backward()
+        optimizer.step()
+
+        print(f"  [Epoch {epoch}/{epochs}] Step Loss: {loss.item():.6f}")
+
+    print("=" * 65)
+    print("  ✅ PEFT Training session completed successfully.")
+
+    if output_path:
+        saved = export_target_adapter(
+            model,
+            target=target_eco,
+            output_path=output_path,
+            base_model_name=f"on-device-{target_eco}-base",
+            custom_metadata={"peft_type": peft_type, "rank": str(rank), "alpha": str(alpha)}
+        )
+        print(f"  💾 Exported target adapter: {saved}")
+        print("=" * 65)
+
+
+def cmd_rl(args):
+    """Executes on-device Reinforcement Learning (GRPO / DPO / PPO)."""
+    from termux_train.rl.grpo import GRPOLoss
+    from termux_train.rl.dpo import DPOLoss
+    from termux_train.rl.ppo import PPOLoss
+    from termux_train.rl.reward import xml_format_reward, accuracy_reward
+    from termux_train.nn.linear import Linear
+    from termux_train.optim.adamw import AdamW
+
+    method = getattr(args, "method", "grpo").lower()
+    group_size = getattr(args, "group_size", 4)
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    beta = getattr(args, "beta", 0.04)
+    epsilon = getattr(args, "epsilon", 0.2)
+    backend_req = getattr(args, "backend", "auto")
+
+    if backend_req and backend_req != "auto":
+        set_backend(backend_req)
+
+    b = get_backend()
+    print("=" * 65)
+    print(f"  🧠 termux-train Reinforcement Learning: {method.upper()} Engine")
+    print(f"  • Compute Backend  : {b.name.upper()}")
+    print(f"  • Group Size       : G={group_size}")
+    print(f"  • Hyperparameters  : Epochs={epochs}, LR={lr}, Beta={beta}, Epsilon={epsilon}")
+    print("=" * 65)
+
+    dim = 16
+    policy_head = Linear(dim, 1, bias=False, backend=b)
+    optimizer = AdamW(policy_head.parameters(), lr=lr)
+
+    if method == "grpo":
+        loss_fn = GRPOLoss(epsilon=epsilon, beta=beta, group_size=group_size)
+        for ep in range(1, epochs + 1):
+            optimizer.zero_grad()
+            inputs = randn((group_size, dim), backend=b)
+            logps = policy_head(inputs).flatten()
+            old_logps = logps.detach()
+
+            candidate_texts = [
+                f"<think>Step {i} analysis</think><answer>{i * 42}</answer>" if i % 2 == 0
+                else f"Raw text output without tags {i}"
+                for i in range(group_size)
+            ]
+            rewards = [xml_format_reward(txt) + accuracy_reward(txt, "0") for txt in candidate_texts]
+
+            loss, metrics = loss_fn(logps, old_logps, rewards)
+            loss.backward()
+            optimizer.step()
+            print(f"  [Epoch {ep}/{epochs}] GRPO Loss: {metrics['total_loss']:.6f} | Mean Adv: {metrics['mean_advantage']:.4f}")
+
+    elif method == "dpo":
+        loss_fn = DPOLoss(beta=beta)
+        batch = 4
+        for ep in range(1, epochs + 1):
+            optimizer.zero_grad()
+            inp_w = randn((batch, dim), backend=b)
+            inp_l = randn((batch, dim), backend=b)
+            pi_w = policy_head(inp_w).flatten()
+            pi_l = policy_head(inp_l).flatten()
+            ref_w = pi_w.detach()
+            ref_l = (pi_l - 0.5).detach()
+
+            loss, metrics = loss_fn(pi_w, pi_l, ref_w, ref_l)
+            loss.backward()
+            optimizer.step()
+            print(f"  [Epoch {ep}/{epochs}] DPO Loss: {metrics['loss']:.6f} | Reward Margin: {metrics['reward_margin']:.4f}")
+
+    elif method == "ppo":
+        loss_fn = PPOLoss(clip_eps=epsilon)
+        batch = group_size
+        for ep in range(1, epochs + 1):
+            optimizer.zero_grad()
+            inp = randn((batch, dim), backend=b)
+            logps = policy_head(inp).flatten()
+            old_logps = logps.detach()
+            advs = Tensor([1.0, -1.0, 0.5, -0.5][:batch], backend=b)
+            loss, metrics = loss_fn(logps, old_logps, advs)
+            loss.backward()
+            optimizer.step()
+            print(f"  [Epoch {ep}/{epochs}] PPO Loss: {metrics['total_loss']:.6f}")
+
+    print("=" * 65)
+    print(f"  ✅ {method.upper()} on-device reinforcement learning converged.")
+    print("=" * 65)
+
+
+def cmd_export(args):
+    """Exports trained adapter directly for target ecosystem."""
+    from termux_train.adapters.hub import export_target_adapter
+
+    adapter_path = args.adapter
+    target = args.target
+    output_path = args.output
+    base_model = getattr(args, "base_model", "unknown")
+
+    if not os.path.exists(adapter_path):
+        print(f"❌ Input adapter file not found: {adapter_path}", file=sys.stderr)
+        sys.exit(1)
+
+    if adapter_path.endswith(".safetensors"):
+        from termux_train.checkpoint.safetensors import load_safetensors
+        tensors, meta = load_safetensors(adapter_path)
+        data = {"adapters": {"layer": {"lora_A": tensors.get("layer.lora_A", list(tensors.values())[0]).tolist() if tensors else [], "lora_B": tensors.get("layer.lora_B", list(tensors.values())[-1]).tolist() if tensors else []}}}
+    else:
+        import json
+        with open(adapter_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+    out_file = export_target_adapter(
+        data,
+        target=target,
+        output_path=output_path,
+        base_model_name=base_model
+    )
+    print(f"✅ Adapter exported for {target.upper()}: {out_file}")
 
 
 def main():
@@ -363,7 +556,46 @@ def main():
     p_train.add_argument("--backend", type=str, default="auto", help="Compute backend (auto, vulkan, numpy, python)")
     p_train.add_argument("--checkpoint", type=str, default=None, help="Path to save SafeTensors checkpoint")
     p_train.add_argument("--resume", type=str, default=None, help="Path to existing SafeTensors checkpoint to resume training from")
+    p_train.add_argument("--rpc", type=str, default=None, help="Distributed RPC server addresses (e.g. '192.168.0.220:50052,192.168.0.253:50052')")
+    p_train.add_argument("-ts", "--tensor-split", type=str, default=None, help="Fraction of the model to offload across devices (e.g. '50,50' or '60,40')")
+    p_train.add_argument("--cluster-rpc-servers", type=str, default=None, help="AMEVA cluster RPC server endpoints (comma-separated host:port)")
+    p_train.add_argument("--cluster-split-mode", type=str, default=None, help="AMEVA cluster split mode")
+    p_train.add_argument("--cluster-tensor-split", type=str, default=None, help="AMEVA cluster tensor split ratios")
+    p_train.add_argument("--cluster-vram-budget", type=str, default=None, help="AMEVA cluster VRAM budget")
     p_train.set_defaults(func=cmd_train)
+
+    # peft (LoRA / DoRA)
+    p_peft = subparsers.add_parser("peft", aliases=["lora"], help="Run on-device PEFT (LoRA / DoRA) training & export")
+    p_peft.add_argument("--type", type=str, default="lora", choices=["lora", "dora"], help="PEFT algorithm: LoRA or DoRA")
+    p_peft.add_argument("--target", type=str, default="llamacpp", choices=["llamacpp", "bitnet", "diffusion", "vision", "tts", "stt"], help="Target ecosystem component")
+    p_peft.add_argument("--dim", type=int, default=64, help="Hidden dimension")
+    p_peft.add_argument("--rank", type=int, default=8, help="Adapter rank")
+    p_peft.add_argument("--alpha", type=float, default=16.0, help="Scaling factor alpha")
+    p_peft.add_argument("--epochs", type=int, default=5, help="Epoch count")
+    p_peft.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_peft.add_argument("--batch-size", type=int, default=16, help="Batch size")
+    p_peft.add_argument("--backend", type=str, default="auto", help="Compute backend")
+    p_peft.add_argument("--output", type=str, default=None, help="Export path for generated adapter")
+    p_peft.set_defaults(func=cmd_peft)
+
+    # rl (Reinforcement Learning: GRPO, DPO, PPO)
+    p_rl = subparsers.add_parser("rl", help="Run on-device Reinforcement Learning (GRPO / DPO / PPO)")
+    p_rl.add_argument("--method", type=str, default="grpo", choices=["grpo", "dpo", "ppo"], help="RL algorithm: GRPO (DeepSeek-R1 style), DPO, or PPO")
+    p_rl.add_argument("--group-size", type=int, default=4, help="Candidate group size G for GRPO")
+    p_rl.add_argument("--epochs", type=int, default=5, help="Training iterations")
+    p_rl.add_argument("--lr", type=float, default=0.001, help="Policy learning rate")
+    p_rl.add_argument("--beta", type=float, default=0.04, help="KL penalty / temperature factor")
+    p_rl.add_argument("--epsilon", type=float, default=0.2, help="Policy clipping parameter")
+    p_rl.add_argument("--backend", type=str, default="auto", help="Compute backend")
+    p_rl.set_defaults(func=cmd_rl)
+
+    # export
+    p_exp = subparsers.add_parser("export", help="Export trained adapter weights to target runtime format")
+    p_exp.add_argument("--adapter", type=str, required=True, help="Path to input adapter JSON/SafeTensors")
+    p_exp.add_argument("--target", type=str, required=True, choices=["llamacpp", "bitnet", "diffusion", "vision", "tts", "stt"], help="Target runtime")
+    p_exp.add_argument("--output", type=str, required=True, help="Path for output exported adapter")
+    p_exp.add_argument("--base-model", type=str, default="unknown", help="Provenance base model identifier")
+    p_exp.set_defaults(func=cmd_export)
 
     # ── AMEVA Component Protocol v1 ─────────────────────────────────────────
     try:

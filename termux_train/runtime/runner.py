@@ -30,6 +30,8 @@ from termux_train import Tensor, randn, set_backend, available_backends
 import termux_train.nn as nn
 import termux_train.optim as optim
 import termux_train.checkpoint as checkpoint
+from termux_train.cluster import parse_cluster_rpc_spec, verify_rpc_cluster_nodes
+from termux_train.exceptions import ClusterConnectionError, ClusterConfigurationError
 
 
 class MiniBatchDataset:
@@ -221,7 +223,41 @@ def run_session(cfg: Dict[str, Any]) -> None:
     backend_req = cfg.get("backend", "auto")
     batch_size = int(cfg.get("batchSize", 16))
 
-    # 1. Set Backend (Fail-Closed)
+    # 1. Parse Distributed RPC and Tensor Splitting Configuration (Strict Fail-Fast)
+    cluster_servers_arg = cfg.get("cluster_rpc_servers") or cfg.get("rpc")
+    tensor_split = cfg.get("cluster_tensor_split") or cfg.get("tensorSplit") or cfg.get("tensor_split")
+    cluster_split_mode = cfg.get("cluster_split_mode") or "tensor"
+    cluster_vram_budget = cfg.get("cluster_vram_budget")
+    distributed_meta: Dict[str, Any] = {}
+
+    if cluster_servers_arg:
+        nodes = parse_cluster_rpc_spec(cluster_servers_arg)
+        if not nodes:
+            raise ClusterConfigurationError("[FAIL-FAST] Invalid --rpc specification: No valid node addresses provided.")
+
+        splits = None
+        if tensor_split:
+            try:
+                splits = [float(s.strip()) for s in str(tensor_split).split(",") if s.strip()]
+            except Exception as exc:
+                raise ClusterConfigurationError(f"[FAIL-FAST] Invalid --tensor-split format: {exc}")
+            if len(splits) != len(nodes) and len(splits) != len(nodes) + 1:
+                raise ClusterConfigurationError(
+                    f"[FAIL-FAST] Tensor split count mismatch: {len(splits)} splits provided for {len(nodes)} RPC nodes."
+                )
+
+        verify_rpc_cluster_nodes(nodes)
+
+        distributed_meta = {
+            "distributed": True,
+            "rpc_nodes": nodes,
+            "tensor_split": splits,
+            "node_count": len(nodes),
+            "split_mode": cluster_split_mode,
+            "vram_budget": cluster_vram_budget,
+        }
+
+    # 2. Set Backend (Fail-Closed)
     if backend_req and backend_req != "auto":
         matched = False
         for b in available_backends():
@@ -350,6 +386,8 @@ def run_session(cfg: Dict[str, Any]) -> None:
             "batchesPerEpoch": dataset.num_batches,
             "latencyMs": round(lat_ms, 3)
         }
+        if distributed_meta:
+            metrics.update(distributed_meta)
         print(f"__METRICS__:{json.dumps(metrics)}", flush=True)
 
     # 5. Checkpoint I/O with Strict Fail-Closed Error Propagation
@@ -373,20 +411,25 @@ def run_session(cfg: Dict[str, Any]) -> None:
                     if "exp_avg_sq" in s_dict and s_dict["exp_avg_sq"] is not None:
                         t_dict[f"optim_exp_avg_sq_{p_idx}"] = Tensor(s_dict["exp_avg_sq"], dtype="float32")
 
+            ckpt_save_metadata = {
+                "framework": "termux-train",
+                "model_type": m_type,
+                "in_dim": str(in_dim),
+                "out_dim": str(out_dim),
+                "epochs": str(epochs),
+                "global_step": str(global_step),
+                "lr": str(lr),
+                "batch_size": str(batch_size),
+                "final_loss": f"{avg_loss:.6f}"
+            }
+            if distributed_meta:
+                ckpt_save_metadata["distributed"] = "true"
+                ckpt_save_metadata["rpc_nodes"] = ",".join(distributed_meta["rpc_nodes"])
+
             checkpoint.save_safetensors(
                 t_dict,
                 ckpt_path,
-                metadata={
-                    "framework": "termux-train",
-                    "model_type": m_type,
-                    "in_dim": str(in_dim),
-                    "out_dim": str(out_dim),
-                    "epochs": str(epochs),
-                    "global_step": str(global_step),
-                    "lr": str(lr),
-                    "batch_size": str(batch_size),
-                    "final_loss": f"{avg_loss:.6f}"
-                }
+                metadata=ckpt_save_metadata
             )
             ckpt_meta = {
                 "event": "checkpoint",
