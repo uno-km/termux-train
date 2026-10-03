@@ -10,6 +10,7 @@ const errors = require('./lib/errors');
 const doctor = require('./lib/doctor');
 const benchmark = require('./lib/benchmark');
 const trainer = require('./lib/trainer');
+const multimodal = require('./lib/multimodal');
 const packageJson = require('./package.json');
 
 const version = packageJson.version;
@@ -25,5 +26,10 @@ module.exports = {
   runBenchmark: benchmark.runBenchmark,
   runBenchmarkAsync: benchmark.runBenchmarkAsync,
   TermuxTrainer: trainer.TermuxTrainer,
-  Trainer: trainer.TermuxTrainer
+  Trainer: trainer.TermuxTrainer,
+  trainDiffusion: multimodal.trainDiffusion,
+  trainVision: multimodal.trainVision,
+  trainSTT: multimodal.trainSTT,
+  trainTTS: multimodal.trainTTS,
+  runClusterProbe: multimodal.runClusterProbe,
 };

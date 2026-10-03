@@ -131,7 +131,37 @@ export function doctor(options?: Record<string, unknown>): DoctorReport;
 export function runDoctor(options?: Record<string, unknown>): DoctorReport;
 export function benchmark(options?: BenchmarkOptions): Promise<BenchmarkResult>;
 export function runBenchmark(options?: BenchmarkOptions): BenchmarkResult;
-export function runBenchmarkAsync(options?: BenchmarkOptions): Promise<BenchmarkResult>;
+export interface MultimodalTrainingOptions {
+  data?: string;
+  imageDir?: string;
+  output?: string;
+  prompt?: string;
+  resolution?: 256 | 512 | 768;
+  epochs?: number;
+  lr?: number;
+  batchSize?: number;
+  rank?: number;
+  alpha?: number;
+  backend?: 'auto' | 'vulkan' | 'amuda' | 'numpy' | 'python';
+}
+
+export interface MultimodalTrainingResult {
+  status: 'SUCCESS' | 'FAILED';
+  subcommand: string;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ClusterProbeOptions {
+  rpc: string;
+  guardBand?: number;
+}
+
+export function trainDiffusion(options?: MultimodalTrainingOptions): Promise<MultimodalTrainingResult>;
+export function trainVision(options?: MultimodalTrainingOptions): Promise<MultimodalTrainingResult>;
+export function trainSTT(options?: MultimodalTrainingOptions): Promise<MultimodalTrainingResult>;
+export function trainTTS(options?: MultimodalTrainingOptions): Promise<MultimodalTrainingResult>;
+export function runClusterProbe(options: ClusterProbeOptions): Promise<MultimodalTrainingResult>;
 
 export namespace errors {
   export class TermuxTrainError extends Error {}

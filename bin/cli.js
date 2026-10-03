@@ -47,24 +47,35 @@ function hasFlag(flag, alias = null) {
 }
 
 function printHelp() {
-  console.log(`termux-train CLI v${version} (Node.js Engine)`);
+  console.log(`termux-train CLI v${version} (Unified Node.js & Python Dual Engine)`);
   console.log('Usage: termux-train <command> [options]\n');
-  console.log('Commands:');
+  console.log('Core Commands:');
   console.log('  doctor                           Inspect device hardware, RAM tier, and Vulkan GPU');
   console.log('  check                            Run self-diagnostic mathematical checks across backends');
   console.log('  score                            Run 0-point baseline granular audit scoring system');
   console.log('  benchmark [options]              Run on-device GEMM & Autograd latency benchmark');
   console.log('  train [options]                  Run on-device training / LoRA loop');
+  console.log('  peft [options]                   Run on-device PEFT (LoRA / DoRA) training & export');
+  console.log('  diffusion-train [options]        Run on-device Image Folder Diffusion LoRA training');
+  console.log('  vision-train [options]           Run on-device Vision VLM Multimodal LoRA training');
+  console.log('  stt-train [options]              Run on-device Whisper STT Cross-Attention LoRA training');
+  console.log('  tts-train [options]              Run on-device Audio TTS Speaker Adaptation LoRA training');
+  console.log('  rl [options]                     Run on-device Reinforcement Learning (GRPO / DPO / PPO)');
+  console.log('  cluster-worker [options]         Start symmetric RPC worker server for Virtual RAM pooling');
+  console.log('  cluster-probe [options]          Probe cluster RPC nodes and inspect pooled virtual RAM');
+  console.log('  export [options]                 Export trained adapter to target runtime format');
   console.log('  demo <1..8>                      Execute one of 8 canonical example demos\n');
   console.log('Options:');
   console.log('  --json                           Output results in standard JSON format');
   console.log('  --dim <num>                      Matrix dimension for benchmark / model dim (default: 256 / 32)');
   console.log('  --data <path>                    Path to dataset file (.safetensors, .jsonl, .txt)');
+  console.log('  --image-dir <path>               Directory containing training images for diffusion');
+  console.log('  --output <path>                  Output path for exported SafeTensors LoRA adapter');
   console.log('  --epochs <num>                   Number of training epochs (default: 5)');
   console.log('  --lr <val>                       Learning rate (default: 0.001)');
   console.log('  --batch-size <num>               Mini-batch size (default: 16)');
-  console.log('  --seq-len <num>                  Sequence length for transformer (default: 32)');
-  console.log('  --backend <name>                 Compute backend (auto, vulkan, numpy, python)');
+  console.log('  --rank <num>                     LoRA rank (default: 4 / 8)');
+  console.log('  --backend <name>                 Compute backend (auto, vulkan, amuda, numpy, python)');
   console.log('  --checkpoint <path>              Path to save SafeTensors checkpoint');
   console.log('  -v, --version                    Display version information');
   console.log('  -h, --help                       Show this help message');
@@ -179,13 +190,21 @@ async function main() {
     }
   }
 
-  if (command === 'check' || command === 'score' || command === 'demo') {
+  const forwardedCommands = new Set([
+    'check', 'score', 'demo', 'info',
+    'diffusion-train', 'vision-train', 'stt-train', 'tts-train',
+    'peft', 'lora', 'rl', 'export',
+    'cluster-worker', 'cluster-probe',
+    'component', 'model', 'instance'
+  ]);
+
+  if (forwardedCommands.has(command)) {
     const pyCmd = resolvePythonCmd();
     if (!pyCmd) {
-      console.error('[ERROR] Python runtime is required to execute native self-tests.');
+      console.error('[ERROR] Python runtime is required to execute native training pipelines.');
       process.exit(1);
     }
-    const pyArgs = ['-m', 'termux_train.cli', command, ...args.slice(1)];
+    const pyArgs = ['-m', 'termux_train.cli', ...args];
     const res = spawnSync(pyCmd, pyArgs, { stdio: 'inherit' });
     process.exit(res.status || 0);
   }

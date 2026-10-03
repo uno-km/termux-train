@@ -472,7 +472,25 @@ function genSafeTensorsDataset(pyCmd, filePath, rows, cols, outCols, outRows = n
   try { fs.unlinkSync(resumeCkptPath); } catch (_) {}
   console.log(`   [PASS] Resume training completed: P1 Loss=${p1FinalLoss.toFixed(4)} → P2 Resume Loss=${p2InitialLoss.toFixed(4)} → Final Loss=${p2FinalLoss.toFixed(4)}\n`);
 
-  console.log('=== All 22 termux-train Production-Grade Verification Tests Passed Successfully! ===');
+  // 23. Multimodal Node.js SDK Exports & CLI Subcommands Parity
+  console.log('23. Testing Multimodal Node.js SDK Exports & CLI Subcommands Parity...');
+  const sdk = require('../index');
+  assert.strictEqual(typeof sdk.trainDiffusion, 'function', 'trainDiffusion must be exported');
+  assert.strictEqual(typeof sdk.trainVision, 'function', 'trainVision must be exported');
+  assert.strictEqual(typeof sdk.trainSTT, 'function', 'trainSTT must be exported');
+  assert.strictEqual(typeof sdk.trainTTS, 'function', 'trainTTS must be exported');
+  assert.strictEqual(typeof sdk.runClusterProbe, 'function', 'runClusterProbe must be exported');
+
+  // Verify CLI parity across all subcommands
+  const cliSubcommands = ['diffusion-train', 'vision-train', 'stt-train', 'tts-train', 'cluster-probe'];
+  for (const sc of cliSubcommands) {
+    const scProc = spawnSync(process.execPath, [path.join(__dirname, '../bin/cli.js'), sc, '--help'], { encoding: 'utf-8' });
+    assert.strictEqual(scProc.status, 0, `Node CLI '${sc} --help' must exit with code 0`);
+    assert.ok(scProc.stdout.includes(sc) || scProc.stdout.includes('options:'), `Node CLI output must contain help for '${sc}'`);
+  }
+  console.log('   [PASS] Multimodal Node.js SDK exports & CLI subcommands operating with 100% parity.\n');
+
+  console.log('=== All 23 termux-train Production-Grade Verification Tests Passed Successfully! ===');
 })().catch((e) => {
   console.error('CRITICAL VERIFICATION FAILURE:', e);
   process.exit(1);
