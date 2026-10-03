@@ -1125,6 +1125,89 @@ class Tensor:
             _attach_grad_fn(out, (self,), _backward)
         return out
 
+    def __getitem__(self, key: Any) -> 'Tensor':
+        """
+        Tensor slicing with Autograd DAG support.
+        Supports integer indexing, row slices, and column slices across 1D/2D tensors.
+        """
+        backend = self.backend
+        is_numpy = getattr(backend, "name", "") == "numpy"
+
+        if is_numpy:
+            sub_data = self._data[key]
+        else:
+            py_list = self.tolist()
+            if isinstance(key, tuple):
+                if len(key) == 2:
+                    r_slice, c_slice = key
+                    if r_slice == slice(None) and isinstance(c_slice, slice):
+                        sub_list = [row[c_slice] for row in py_list]
+                    elif isinstance(r_slice, slice) and (c_slice == slice(None) or c_slice is None):
+                        sub_list = py_list[r_slice]
+                    elif isinstance(r_slice, slice) and isinstance(c_slice, slice):
+                        sub_list = [row[c_slice] for row in py_list[r_slice]]
+                    elif isinstance(r_slice, int) and (c_slice == slice(None) or c_slice is None):
+                        sub_list = py_list[r_slice]
+                    elif isinstance(r_slice, int) and isinstance(c_slice, slice):
+                        sub_list = py_list[r_slice][c_slice]
+                    else:
+                        sub_list = py_list[r_slice]
+                else:
+                    sub_list = py_list[key[0]]
+            elif isinstance(key, slice):
+                sub_list = py_list[key]
+            elif isinstance(key, int):
+                sub_list = py_list[key]
+            else:
+                raise TypeError(f"Unsupported index type: {type(key)}")
+            sub_data = backend.from_data(sub_list, dtype=self.dtype)
+
+        req_grad = self.requires_grad and Tensor.is_grad_enabled()
+        out = Tensor(
+            sub_data,
+            dtype=self.dtype,
+            requires_grad=req_grad,
+            _prev=(self,) if req_grad else (),
+            _op="getitem",
+            backend=backend
+        )
+
+        if req_grad:
+            saved_v = self._version
+            orig_shape = self.shape
+
+            def _backward():
+                if self._version != saved_v:
+                    raise RuntimeError("one of the variables needed for gradient computation has been modified by an inplace operation")
+                if out.grad is not None and self.requires_grad:
+                    zero_grad = zeros(orig_shape, dtype="float32", backend=backend)
+                    if is_numpy:
+                        zero_grad._data[key] += out.grad._data
+                    else:
+                        zg_list = zero_grad.tolist()
+                        og_list = out.grad.tolist()
+                        if isinstance(key, tuple) and len(key) == 2:
+                            r_slice, c_slice = key
+                            if r_slice == slice(None) and isinstance(c_slice, slice):
+                                for r_idx, row in enumerate(zg_list):
+                                    row[c_slice] = og_list[r_idx]
+                            elif isinstance(r_slice, slice) and (c_slice == slice(None) or c_slice is None):
+                                zg_list[r_slice] = og_list
+                            elif isinstance(r_slice, int) and (c_slice == slice(None) or c_slice is None):
+                                zg_list[r_slice] = og_list
+                            else:
+                                zg_list[key[0]] = og_list
+                        elif isinstance(key, slice):
+                            zg_list[key] = og_list
+                        elif isinstance(key, int):
+                            zg_list[key] = og_list
+                        zero_grad = Tensor(backend.from_data(zg_list, dtype="float32"), backend=backend)
+                    self._accumulate_grad_data(zero_grad._data)
+
+            _attach_grad_fn(out, (self,), _backward)
+
+        return out
+
     # =========================================================================
     # Reverse Mode Autograd Entrypoint (In-Flight Memory Release on Backward)
     # =========================================================================

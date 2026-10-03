@@ -206,9 +206,11 @@ def load_dataset_and_metadata(data_path: Optional[str], cfg: Dict[str, Any]) -> 
     # Synthetic Benchmark Data — only reached when data_path is explicitly None/omitted
     total_synthetic_samples = batch_size * 4
     if m_type in ("transformer", "transformer-lm", "rope"):
+        v_slice = cfg.get("vocab_slice") or cfg.get("vocabSlice")
         v_size = max(int(cfg.get("vocabSize", 260)), 260)
-        raw_x = [[random.randint(0, v_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
-        raw_y = [[random.randint(0, v_size - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
+        eff_v = int(v_slice) if (v_slice and 0 < int(v_slice) < v_size) else v_size
+        raw_x = [[random.randint(0, eff_v - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
+        raw_y = [[random.randint(0, eff_v - 1) for _ in range(seq_len)] for _ in range(total_synthetic_samples)]
         return Tensor(raw_x, dtype="int64"), Tensor(raw_y, dtype="int64"), cfg_dim, cfg_out_dim
     else:
         return randn((total_synthetic_samples, cfg_dim)), randn((total_synthetic_samples, cfg_out_dim)), cfg_dim, cfg_out_dim
@@ -230,6 +232,25 @@ def run_session(cfg: Dict[str, Any]) -> None:
     cluster_vram_budget = cfg.get("cluster_vram_budget")
     distributed_meta: Dict[str, Any] = {}
 
+    # 1.1 Parse GPU Slicing Options (Vocab Slicing, Chunked Dispatch, Layer Streaming)
+    vocab_slice = cfg.get("vocab_slice") or cfg.get("vocabSlice")
+    if vocab_slice is not None:
+        vocab_slice = int(vocab_slice)
+    chunk_layers = cfg.get("chunk_layers") or cfg.get("chunkLayers")
+    if chunk_layers is not None:
+        chunk_layers = int(chunk_layers)
+    stream_layers = cfg.get("stream_layers") or cfg.get("streamLayers")
+    if stream_layers is not None:
+        stream_layers = int(stream_layers)
+
+    gpu_slicing_meta: Dict[str, Any] = {}
+    if vocab_slice or chunk_layers or stream_layers:
+        gpu_slicing_meta = {
+            "vocab_slice": vocab_slice,
+            "chunk_layers": chunk_layers,
+            "stream_layers": stream_layers,
+        }
+
     if cluster_servers_arg:
         nodes = parse_cluster_rpc_spec(cluster_servers_arg)
         if not nodes:
@@ -248,6 +269,11 @@ def run_session(cfg: Dict[str, Any]) -> None:
 
         verify_rpc_cluster_nodes(nodes)
 
+        from termux_train.cluster import VirtualRAMPool
+        pool = VirtualRAMPool()
+        for ep in nodes:
+            pool.add_node(ep, total_ram_mb=8192, mem_available_mb=5000)
+
         distributed_meta = {
             "distributed": True,
             "rpc_nodes": nodes,
@@ -255,6 +281,9 @@ def run_session(cfg: Dict[str, Any]) -> None:
             "node_count": len(nodes),
             "split_mode": cluster_split_mode,
             "vram_budget": cluster_vram_budget,
+            "virtual_ram_pool": bool(cfg.get("virtual_ram_pool", False)),
+            "total_pooled_ram_mb": pool.total_pooled_ram_mb,
+            "safe_usable_vram_mb": pool.total_safe_vram_mb,
         }
 
     # 2. Set Backend (Fail-Closed)
@@ -295,7 +324,10 @@ def run_session(cfg: Dict[str, Any]) -> None:
             num_heads=heads,
             d_ff=in_dim * 4,
             num_layers=layers,
-            pos_type="rope"
+            pos_type="rope",
+            vocab_slice=vocab_slice,
+            chunk_layers=chunk_layers,
+            stream_layers=stream_layers,
         )
         optimizer = optim.AdamW(model.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss()
@@ -355,7 +387,12 @@ def run_session(cfg: Dict[str, Any]) -> None:
             if m_type in ("transformer", "transformer-lm", "rope"):
                 logits, _ = model(bx)
                 b, s, v = logits.shape
-                batch_loss = criterion(logits.reshape(b * s, v), by.reshape(b * s))
+                flat_by = by.reshape(b * s)
+                if vocab_slice and v < vocab_size:
+                    by_raw = flat_by.backend.to_flat_list(flat_by._data)
+                    masked_by = [t if 0 <= t < v else -100 for t in by_raw]
+                    flat_by = Tensor(flat_by.backend.from_data(masked_by, dtype="int64"), dtype="int64", backend=flat_by.backend)
+                batch_loss = criterion(logits.reshape(b * s, v), flat_by)
             else:
                 preds = model(bx)
                 batch_loss = criterion(preds, by)
@@ -388,6 +425,8 @@ def run_session(cfg: Dict[str, Any]) -> None:
         }
         if distributed_meta:
             metrics.update(distributed_meta)
+        if gpu_slicing_meta:
+            metrics.update(gpu_slicing_meta)
         print(f"__METRICS__:{json.dumps(metrics)}", flush=True)
 
     # 5. Checkpoint I/O with Strict Fail-Closed Error Propagation
@@ -425,6 +464,10 @@ def run_session(cfg: Dict[str, Any]) -> None:
             if distributed_meta:
                 ckpt_save_metadata["distributed"] = "true"
                 ckpt_save_metadata["rpc_nodes"] = ",".join(distributed_meta["rpc_nodes"])
+            if gpu_slicing_meta:
+                for k, v in gpu_slicing_meta.items():
+                    if v is not None:
+                        ckpt_save_metadata[k] = str(v)
 
             checkpoint.save_safetensors(
                 t_dict,

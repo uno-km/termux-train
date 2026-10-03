@@ -184,7 +184,10 @@ class TinyTransformerLM(Module):
         max_seq_len: int = 512,
         padding_idx: Optional[int] = None,
         tie_weights: bool = False,
-        pos_type: str = "rope"
+        pos_type: str = "rope",
+        vocab_slice: Optional[int] = None,
+        chunk_layers: Optional[int] = None,
+        stream_layers: Optional[int] = None,
     ):
         super().__init__()
         self.vocab_size = vocab_size
@@ -193,6 +196,9 @@ class TinyTransformerLM(Module):
         self.num_layers = num_layers
         self.tie_weights = tie_weights
         self.pos_type = pos_type.lower()
+        self.vocab_slice = vocab_slice if (vocab_slice and 0 < vocab_slice < vocab_size) else None
+        self.chunk_layers = chunk_layers if (chunk_layers and chunk_layers > 0) else None
+        self.stream_layers = stream_layers if (stream_layers and stream_layers > 0) else None
 
         if self.pos_type not in ("rope", "learned"):
             raise ValueError(f"pos_type must be 'rope' or 'learned', got '{pos_type}'")
@@ -261,44 +267,76 @@ class TinyTransformerLM(Module):
             x = tok_embeddings  # RoPE applies inside attention heads directly
 
         present_kvs = [] if use_cache else None
-        for i, block in enumerate(self.blocks):
-            past_kv = past_key_values[i] if past_key_values is not None else None
-            if use_cache:
-                x, present_kv = block(
-                    x,
-                    mask=mask,
-                    causal=True,
-                    past_key_value=past_kv,
-                    use_cache=True,
-                    position_offset=position_offset
-                )
-                present_kvs.append(present_kv)
-            else:
-                x = block(
-                    x,
-                    mask=mask,
-                    causal=True,
-                    past_key_value=past_kv,
-                    use_cache=False,
-                    position_offset=position_offset
-                )
+        num_blocks = len(self.blocks)
+        chunk_size = self.chunk_layers if self.chunk_layers else num_blocks
+
+        for chunk_start in range(0, num_blocks, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, num_blocks)
+            for i in range(chunk_start, chunk_end):
+                block = self.blocks[i]
+                past_kv = past_key_values[i] if past_key_values is not None else None
+                if use_cache:
+                    x, present_kv = block(
+                        x,
+                        mask=mask,
+                        causal=True,
+                        past_key_value=past_kv,
+                        use_cache=True,
+                        position_offset=position_offset
+                    )
+                    present_kvs.append(present_kv)
+                else:
+                    x = block(
+                        x,
+                        mask=mask,
+                        causal=True,
+                        past_key_value=past_kv,
+                        use_cache=False,
+                        position_offset=position_offset
+                    )
+            # Mali Watchdog timeout prevention: Intermediate synchronization barrier after each chunk
+            if self.chunk_layers and hasattr(backend, "sync"):
+                backend.sync()
 
         x = self.ln_f(x)
-        if self.tie_weights:
-            logits = x @ self.tok_emb.weight.transpose(1, 0)
+
+        # LM Head Projection (with optional Vocab Slicing)
+        if self.vocab_slice:
+            v_slice = self.vocab_slice
+            if self.tie_weights:
+                w_head = self.tok_emb.weight[:v_slice, :]
+                logits = x @ w_head.transpose(1, 0)  # (B, S, v_slice)
+            else:
+                w_head = self.head.weight[:, :v_slice]
+                logits = x @ w_head  # (B, S, v_slice)
+
+            if not self.tie_weights and getattr(self.head, "bias", None) is not None:
+                logits = logits + self.head.bias[:, :v_slice]
+
+            loss = None
+            if targets is not None:
+                if targets.shape != (B, S):
+                    raise ValueError(f"targets shape {targets.shape} does not match logits input shape {(B, S)}")
+                logits_flat = logits.reshape(B * S, v_slice)
+                targets_flat = targets.reshape(B * S)
+                loss = cross_entropy_loss(logits_flat, targets_flat)
         else:
-            logits = self.head(x)  # (B, S, vocab_size)
+            if self.tie_weights:
+                logits = x @ self.tok_emb.weight.transpose(1, 0)
+            else:
+                logits = self.head(x)  # (B, S, vocab_size)
 
-        loss = None
-        if targets is not None:
-            if targets.shape != (B, S):
-                raise ValueError(f"targets shape {targets.shape} does not match logits input shape {(B, S)}")
-            logits_flat = logits.reshape(B * S, self.vocab_size)
-            targets_flat = targets.reshape(B * S)
-            loss = cross_entropy_loss(logits_flat, targets_flat)
+            loss = None
+            if targets is not None:
+                if targets.shape != (B, S):
+                    raise ValueError(f"targets shape {targets.shape} does not match logits input shape {(B, S)}")
+                logits_flat = logits.reshape(B * S, self.vocab_size)
+                targets_flat = targets.reshape(B * S)
+                loss = cross_entropy_loss(logits_flat, targets_flat)
 
+        curr_v = logits.shape[-1]
         if orig_ndim == 1 and not use_cache:
-            logits = logits.reshape(S, self.vocab_size)
+            logits = logits.reshape(S, curr_v)
 
         if use_cache:
             return logits, loss, present_kvs
@@ -322,7 +360,7 @@ class TinyTransformerLM(Module):
 
         tokens = list(prompt_tokens)
         backend = self.tok_emb.weight.backend
-        v_size = self.vocab_size
+        v_size = self.vocab_slice if self.vocab_slice else self.vocab_size
 
         with no_grad():
             if use_cache and len(tokens) > 0:

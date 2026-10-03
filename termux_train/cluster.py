@@ -6,7 +6,7 @@ Component: [TRAIN-CLUSTER]
 
 import socket
 import logging
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union, Dict, Any, Tuple
 
 from termux_train.exceptions import (
     ClusterConnectionError,
@@ -103,3 +103,159 @@ def verify_rpc_cluster_health(servers: List[str], timeout: float = 3.0) -> Dict[
             status["all_healthy"] = False
             status["nodes"][endpoint] = {"reachable": False, "error": str(exc)}
     return status
+
+
+DEFAULT_GUARD_BAND_MB = 300
+
+
+class VirtualNodeInfo:
+    """Telemetry and capacity metadata for a cluster compute/memory node."""
+
+    def __init__(
+        self,
+        endpoint: str,
+        total_ram_mb: int,
+        mem_available_mb: int,
+        guard_band_mb: int = DEFAULT_GUARD_BAND_MB,
+        is_local: bool = False,
+        soc: str = "Unknown",
+        gpu: str = "Unknown",
+        backend: str = "auto",
+    ):
+        self.endpoint = endpoint
+        parts = endpoint.split(":")
+        self.host = parts[0]
+        self.port = int(parts[1]) if len(parts) > 1 else 50052
+        self.total_ram_mb = max(1, total_ram_mb)
+        self.mem_available_mb = max(0, mem_available_mb)
+        self.guard_band_mb = max(0, guard_band_mb)
+        self.is_local = is_local
+        self.soc = soc
+        self.gpu = gpu
+        self.backend = backend
+
+    @property
+    def safe_usable_vram_mb(self) -> int:
+        """Safe allocatable RAM after deducting safety guard-band (까치밥 메모리)."""
+        return max(64, self.mem_available_mb - self.guard_band_mb)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "endpoint": self.endpoint,
+            "host": self.host,
+            "port": self.port,
+            "total_ram_mb": self.total_ram_mb,
+            "mem_available_mb": self.mem_available_mb,
+            "guard_band_mb": self.guard_band_mb,
+            "safe_usable_vram_mb": self.safe_usable_vram_mb,
+            "is_local": self.is_local,
+            "soc": self.soc,
+            "gpu": self.gpu,
+            "backend": self.backend,
+        }
+
+
+class VirtualRAMPool:
+    """
+    AMEVA Virtual RAM Pooling Orchestrator.
+    Binds heterogeneous mobile fleet memories (S25, S21, S20, A53, A35)
+    into a unified virtual memory space (e.g. 44GB physical RAM pool).
+    """
+
+    def __init__(self, guard_band_mb: int = DEFAULT_GUARD_BAND_MB):
+        self.guard_band_mb = guard_band_mb
+        self.nodes: Dict[str, VirtualNodeInfo] = {}
+
+    def add_node(
+        self,
+        endpoint: str,
+        total_ram_mb: int,
+        mem_available_mb: int,
+        is_local: bool = False,
+        soc: str = "Unknown",
+        gpu: str = "Unknown",
+        backend: str = "auto",
+    ) -> VirtualNodeInfo:
+        node = VirtualNodeInfo(
+            endpoint=endpoint,
+            total_ram_mb=total_ram_mb,
+            mem_available_mb=mem_available_mb,
+            guard_band_mb=self.guard_band_mb,
+            is_local=is_local,
+            soc=soc,
+            gpu=gpu,
+            backend=backend,
+        )
+        self.nodes[endpoint] = node
+        return node
+
+    @property
+    def node_count(self) -> int:
+        return len(self.nodes)
+
+    @property
+    def total_pooled_ram_mb(self) -> int:
+        """Total raw physical RAM aggregated across all active fleet nodes."""
+        return sum(n.total_ram_mb for n in self.nodes.values())
+
+    @property
+    def total_safe_vram_mb(self) -> int:
+        """Total safe usable memory space after guard-band deduction."""
+        return sum(n.safe_usable_vram_mb for n in self.nodes.values())
+
+    def calculate_shards(
+        self, num_layers: int, strategy: str = "proportional"
+    ) -> List[Tuple[str, int, int]]:
+        """
+        Partitions layers across active cluster nodes according to memory capacity.
+        Returns list of tuples: (endpoint, start_layer_inclusive, end_layer_exclusive).
+        """
+        if num_layers <= 0:
+            raise ValueError(f"num_layers must be positive, got {num_layers}")
+        if not self.nodes:
+            raise ClusterConfigurationError("Cannot calculate shards: VirtualRAMPool has no registered nodes.")
+
+        node_list = list(self.nodes.values())
+        k = len(node_list)
+
+        if k == 1 or num_layers <= k:
+            # Simple uniform distribution
+            base = num_layers // k
+            rem = num_layers % k
+            allocations = [base + (1 if i < rem else 0) for i in range(k)]
+        elif strategy == "uniform":
+            base = num_layers // k
+            rem = num_layers % k
+            allocations = [base + (1 if i < rem else 0) for i in range(k)]
+        else:
+            # Proportional to safe usable memory
+            total_mem = max(1, self.total_safe_vram_mb)
+            allocations = [max(1, round(n.safe_usable_vram_mb / total_mem * num_layers)) for n in node_list]
+            diff = num_layers - sum(allocations)
+            if diff != 0:
+                # Adjust highest capacity node
+                max_idx = max(range(k), key=lambda i: node_list[i].safe_usable_vram_mb)
+                allocations[max_idx] = max(1, allocations[max_idx] + diff)
+
+        shards = []
+        curr = 0
+        for i, count in enumerate(allocations):
+            end = min(curr + count, num_layers)
+            shards.append((node_list[i].endpoint, curr, end))
+            curr = end
+
+        # If any layers remain unassigned due to rounding, assign to last node
+        if curr < num_layers and shards:
+            ep, s, _ = shards[-1]
+            shards[-1] = (ep, s, num_layers)
+
+        return shards
+
+    def get_summary(self) -> Dict[str, Any]:
+        return {
+            "total_nodes": self.node_count,
+            "total_pooled_ram_mb": self.total_pooled_ram_mb,
+            "total_safe_vram_mb": self.total_safe_vram_mb,
+            "guard_band_per_node_mb": self.guard_band_mb,
+            "nodes": [n.to_dict() for n in self.nodes.values()],
+        }

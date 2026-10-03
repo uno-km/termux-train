@@ -309,6 +309,10 @@ def cmd_train(args):
         "cluster_split_mode": getattr(args, "cluster_split_mode", None),
         "cluster_tensor_split": getattr(args, "cluster_tensor_split", None),
         "cluster_vram_budget": getattr(args, "cluster_vram_budget", None),
+        "vocab_slice": getattr(args, "vocab_slice", None),
+        "chunk_layers": getattr(args, "chunk_layers", None),
+        "stream_layers": getattr(args, "stream_layers", None),
+        "virtual_ram_pool": getattr(args, "virtual_ram_pool", False),
     }
 
     try:
@@ -316,6 +320,77 @@ def cmd_train(args):
     except Exception as exc:
         print(f"[ERROR] Training failed: {exc}", file=sys.stderr)
         sys.exit(1)
+
+
+def cmd_cluster_worker(args):
+    """Starts symmetric on-device RPC worker server for virtual RAM pooling."""
+    from termux_train.cluster_trainer import ClusterWorkerServer
+    port = getattr(args, "port", 50052)
+    host = getattr(args, "host", "0.0.0.0")
+    backend_req = getattr(args, "backend", "auto")
+    guard_band = getattr(args, "guard_band", 300)
+
+    server = ClusterWorkerServer(host=host, port=port, backend=backend_req, guard_band_mb=guard_band)
+    server.start()
+    print("=" * 65)
+    print(f"  🌐 AMEVA-Cluster RPC Worker Active on {host}:{port}")
+    print(f"  • Safe Guard-Band  : {guard_band} MB")
+    print(f"  • Compute Backend  : {get_backend().name.upper()}")
+    print("  • Status           : Waiting for training shards (Ctrl+C to stop)")
+    print("=" * 65)
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("\nStopping cluster worker...")
+        server.stop()
+
+
+def cmd_cluster_probe(args):
+    """Probes cluster RPC nodes, diagnostics and reports pooled virtual RAM."""
+    from termux_train.cluster import parse_cluster_rpc_spec, VirtualRAMPool
+    import socket
+    import struct
+    import json
+
+    rpc_spec = getattr(args, "rpc", None)
+    if not rpc_spec:
+        print("❌ Error: --rpc endpoint list required (e.g. --rpc '192.168.0.220:50052,192.168.0.253:50052')", file=sys.stderr)
+        sys.exit(1)
+
+    nodes = parse_cluster_rpc_spec(rpc_spec)
+    pool = VirtualRAMPool(guard_band_mb=getattr(args, "guard_band", 300))
+
+    print("=" * 65)
+    print("  🔍 AMEVA Virtual RAM Pooling Fleet Probe")
+    print("=" * 65)
+
+    for ep in nodes:
+        host, port_str = ep.split(":")
+        port = int(port_str)
+        t0 = time.perf_counter()
+        try:
+            with socket.create_connection((host, port), timeout=3.0) as s:
+                rtt = (time.perf_counter() - t0) * 1000.0
+                raw = json.dumps({"cmd": "PROBE"}).encode("utf-8")
+                s.sendall(struct.pack(">I", len(raw)) + raw)
+                hdr = s.recv(4)
+                mlen = struct.unpack(">I", hdr)[0]
+                resp = json.loads(s.recv(mlen).decode("utf-8"))
+                total_ram = resp.get("total_ram_mb", 8192)
+                avail_ram = resp.get("mem_available_mb", 4096)
+                backend_name = resp.get("backend", "unknown")
+                node = pool.add_node(ep, total_ram, avail_ram, backend=backend_name)
+                print(f"  ✅ Node [{ep}]: {rtt:.1f}ms RTT | RAM: {total_ram}MB (Safe Usable: {node.safe_usable_vram_mb}MB) | Backend: {backend_name.upper()}")
+        except Exception as exc:
+            print(f"  ❌ Node [{ep}]: FAILED ({exc})")
+
+    summary = pool.get_summary()
+    print("=" * 65)
+    print(f"  📊 Pooled Nodes       : {summary['total_nodes']} active")
+    print(f"  🧠 Total Pooled RAM   : {summary['total_pooled_ram_mb']} MB (~{summary['total_pooled_ram_mb']/1024:.1f} GB)")
+    print(f"  🛡️ Safe Usable Memory : {summary['total_safe_vram_mb']} MB (~{summary['total_safe_vram_mb']/1024:.1f} GB)")
+    print("=" * 65)
 
 
 def cmd_peft(args):
@@ -562,7 +637,25 @@ def main():
     p_train.add_argument("--cluster-split-mode", type=str, default=None, help="AMEVA cluster split mode")
     p_train.add_argument("--cluster-tensor-split", type=str, default=None, help="AMEVA cluster tensor split ratios")
     p_train.add_argument("--cluster-vram-budget", type=str, default=None, help="AMEVA cluster VRAM budget")
+    p_train.add_argument("--vocab-slice", type=int, default=None, help="Slice LM Head vocabulary projection to top N items (reduces VRAM significantly)")
+    p_train.add_argument("--chunk-layers", type=int, default=None, help="Process layers in chunks of N to prevent Mali GPU watchdog timeouts")
+    p_train.add_argument("--stream-layers", type=int, default=None, help="Layer streaming ping-pong buffer size (reduces active resident RAM)")
+    p_train.add_argument("--virtual-ram-pool", action="store_true", help="Aggregate all cluster node RAM into a single unified virtual memory pool for sharded pipeline training")
     p_train.set_defaults(func=cmd_train)
+
+    # cluster-worker
+    p_cw = subparsers.add_parser("cluster-worker", help="Start symmetric RPC worker server to contribute LPDDR RAM to cluster")
+    p_cw.add_argument("--host", type=str, default="0.0.0.0", help="Binding host address (default: 0.0.0.0)")
+    p_cw.add_argument("--port", type=int, default=50052, help="RPC port (default: 50052)")
+    p_cw.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
+    p_cw.add_argument("--guard-band", type=int, default=300, help="Safety guard-band in MB to protect against Android LMK (default: 300)")
+    p_cw.set_defaults(func=cmd_cluster_worker)
+
+    # cluster-probe
+    p_cp = subparsers.add_parser("cluster-probe", help="Probe cluster RPC nodes and inspect pooled virtual RAM")
+    p_cp.add_argument("--rpc", type=str, required=True, help="RPC endpoints to probe (e.g. '192.168.0.220:50052,192.168.0.253:50052')")
+    p_cp.add_argument("--guard-band", type=int, default=300, help="Safety guard-band in MB (default: 300)")
+    p_cp.set_defaults(func=cmd_cluster_probe)
 
     # peft (LoRA / DoRA)
     p_peft = subparsers.add_parser("peft", aliases=["lora"], help="Run on-device PEFT (LoRA / DoRA) training & export")
