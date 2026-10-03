@@ -423,6 +423,84 @@ def cmd_diffusion_train(args):
     )
 
 
+def cmd_vision_train(args):
+    """Executes on-device Vision VLM LoRA training."""
+    from termux_train.vision.trainer import train_vision_vlm_lora
+
+    data = args.data
+    output_path = getattr(args, "output", None) or os.path.join(data if os.path.isdir(data) else os.path.dirname(data), "adapter_vision_lora.safetensors")
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    batch_size = getattr(args, "batch_size", 1)
+    rank = getattr(args, "rank", 4)
+    alpha = getattr(args, "alpha", 1.0)
+    backend_req = getattr(args, "backend", "auto")
+
+    train_vision_vlm_lora(
+        data_source=data,
+        output_path=output_path,
+        epochs=epochs,
+        lr=lr,
+        batch_size=batch_size,
+        rank=rank,
+        alpha=alpha,
+        backend=backend_req,
+        verbose=True,
+    )
+
+
+def cmd_stt_train(args):
+    """Executes on-device Whisper STT Cross-Attention LoRA acoustic training."""
+    from termux_train.audio.trainer import train_stt_lora
+
+    data = args.data
+    output_path = getattr(args, "output", None) or os.path.join(data if os.path.isdir(data) else os.path.dirname(data), "adapter_stt_lora.safetensors")
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    batch_size = getattr(args, "batch_size", 1)
+    rank = getattr(args, "rank", 4)
+    alpha = getattr(args, "alpha", 1.0)
+    backend_req = getattr(args, "backend", "auto")
+
+    train_stt_lora(
+        data_source=data,
+        output_path=output_path,
+        epochs=epochs,
+        lr=lr,
+        batch_size=batch_size,
+        rank=rank,
+        alpha=alpha,
+        backend=backend_req,
+        verbose=True,
+    )
+
+
+def cmd_tts_train(args):
+    """Executes on-device Audio TTS Speaker Adaptation LoRA training."""
+    from termux_train.audio.trainer import train_tts_lora
+
+    data = args.data
+    output_path = getattr(args, "output", None) or os.path.join(data if os.path.isdir(data) else os.path.dirname(data), "adapter_tts_lora.safetensors")
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    batch_size = getattr(args, "batch_size", 1)
+    rank = getattr(args, "rank", 4)
+    alpha = getattr(args, "alpha", 1.0)
+    backend_req = getattr(args, "backend", "auto")
+
+    train_tts_lora(
+        data_source=data,
+        output_path=output_path,
+        epochs=epochs,
+        lr=lr,
+        batch_size=batch_size,
+        rank=rank,
+        alpha=alpha,
+        backend=backend_req,
+        verbose=True,
+    )
+
+
 def cmd_peft(args):
     """Executes on-device PEFT (LoRA / DoRA) training loop."""
     from termux_train.nn.linear import Linear
@@ -714,6 +792,42 @@ def main():
     p_diff.add_argument("--alpha", type=float, default=1.0, help="LoRA alpha scaling factor")
     p_diff.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
     p_diff.set_defaults(func=cmd_diffusion_train)
+
+    # vision-train
+    p_vis = subparsers.add_parser("vision-train", help="Run on-device Vision VLM LoRA training")
+    p_vis.add_argument("--data", type=str, required=True, help="Path to QA dataset (.json, .jsonl) or directory of images")
+    p_vis.add_argument("--output", type=str, default=None, help="Output .safetensors path for trained VLM LoRA adapter")
+    p_vis.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    p_vis.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_vis.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    p_vis.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    p_vis.add_argument("--alpha", type=float, default=1.0, help="LoRA alpha scaling factor")
+    p_vis.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
+    p_vis.set_defaults(func=cmd_vision_train)
+
+    # stt-train
+    p_stt = subparsers.add_parser("stt-train", help="Run on-device Whisper STT Cross-Attention LoRA acoustic training")
+    p_stt.add_argument("--data", type=str, required=True, help="Path to manifest (.json, .jsonl) or directory of audio files")
+    p_stt.add_argument("--output", type=str, default=None, help="Output .safetensors path for trained STT LoRA adapter")
+    p_stt.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    p_stt.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_stt.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    p_stt.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    p_stt.add_argument("--alpha", type=float, default=1.0, help="LoRA alpha scaling factor")
+    p_stt.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
+    p_stt.set_defaults(func=cmd_stt_train)
+
+    # tts-train
+    p_tts = subparsers.add_parser("tts-train", help="Run on-device Audio TTS Speaker Adaptation LoRA training")
+    p_tts.add_argument("--data", type=str, required=True, help="Path to voice samples manifest or directory of audio files")
+    p_tts.add_argument("--output", type=str, default=None, help="Output .safetensors path for trained TTS LoRA adapter")
+    p_tts.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    p_tts.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_tts.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    p_tts.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    p_tts.add_argument("--alpha", type=float, default=1.0, help="LoRA alpha scaling factor")
+    p_tts.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
+    p_tts.set_defaults(func=cmd_tts_train)
 
     # rl (Reinforcement Learning: GRPO, DPO, PPO)
     p_rl = subparsers.add_parser("rl", help="Run on-device Reinforcement Learning (GRPO / DPO / PPO)")
