@@ -393,6 +393,36 @@ def cmd_cluster_probe(args):
     print("=" * 65)
 
 
+def cmd_diffusion_train(args):
+    """Executes on-device Image Folder Diffusion LoRA training."""
+    from termux_train.diffusion.trainer import train_diffusion_lora
+
+    image_dir = args.image_dir
+    output_path = getattr(args, "output", None) or os.path.join(image_dir, "adapter_diffusion_lora.safetensors")
+    prompt = getattr(args, "prompt", "a photo of subject")
+    resolution = getattr(args, "resolution", 512)
+    epochs = getattr(args, "epochs", 5)
+    lr = getattr(args, "lr", 0.001)
+    batch_size = getattr(args, "batch_size", 1)
+    rank = getattr(args, "rank", 4)
+    alpha = getattr(args, "alpha", 1.0)
+    backend_req = getattr(args, "backend", "auto")
+
+    train_diffusion_lora(
+        image_dir=image_dir,
+        output_path=output_path,
+        prompt=prompt,
+        resolution=resolution,
+        epochs=epochs,
+        lr=lr,
+        batch_size=batch_size,
+        rank=rank,
+        alpha=alpha,
+        backend=backend_req,
+        verbose=True,
+    )
+
+
 def cmd_peft(args):
     """Executes on-device PEFT (LoRA / DoRA) training loop."""
     from termux_train.nn.linear import Linear
@@ -670,6 +700,20 @@ def main():
     p_peft.add_argument("--backend", type=str, default="auto", help="Compute backend")
     p_peft.add_argument("--output", type=str, default=None, help="Export path for generated adapter")
     p_peft.set_defaults(func=cmd_peft)
+
+    # diffusion-train
+    p_diff = subparsers.add_parser("diffusion-train", help="Run on-device Image Folder Diffusion LoRA training")
+    p_diff.add_argument("--image-dir", type=str, required=True, help="Directory containing training images and .txt captions")
+    p_diff.add_argument("--output", type=str, default=None, help="Output .safetensors path for trained LoRA adapter")
+    p_diff.add_argument("--prompt", type=str, default="a photo of subject", help="Default trigger prompt/caption")
+    p_diff.add_argument("--resolution", type=int, default=512, choices=[256, 512, 768], help="Image resolution (default: 512)")
+    p_diff.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    p_diff.add_argument("--lr", type=float, default=0.001, help="Learning rate")
+    p_diff.add_argument("--batch-size", type=int, default=1, help="Batch size")
+    p_diff.add_argument("--rank", type=int, default=4, help="LoRA rank")
+    p_diff.add_argument("--alpha", type=float, default=1.0, help="LoRA alpha scaling factor")
+    p_diff.add_argument("--backend", type=str, default="auto", help="Compute backend: auto, vulkan, amuda, numpy, python")
+    p_diff.set_defaults(func=cmd_diffusion_train)
 
     # rl (Reinforcement Learning: GRPO, DPO, PPO)
     p_rl = subparsers.add_parser("rl", help="Run on-device Reinforcement Learning (GRPO / DPO / PPO)")

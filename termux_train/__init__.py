@@ -4,7 +4,7 @@ termux-train (AMEVA-Termux)
 Native On-Device Deep Learning & Autograd Training Framework for Android Termux.
 """
 
-__version__ = "1.1.7"
+__version__ = "1.1.8"
 __author__ = "AMEVA Team"
 
 from .backend import get_backend, set_backend, available_backends
@@ -18,6 +18,7 @@ from . import data
 from . import cluster
 from . import rl
 from . import adapters
+from . import diffusion
 from .exceptions import ClusterConnectionError, ClusterConfigurationError
 from .cluster import (
     parse_cluster_rpc_spec,
@@ -50,6 +51,7 @@ __all__ = [
     "cluster",
     "rl",
     "adapters",
+    "diffusion",
     
     # Backend
     "get_backend",

@@ -14,7 +14,7 @@ from .rope import RotaryEmbedding
 from .transformer import FeedForward, TransformerBlock, TinyTransformerLM
 from .quantization import QuantizedLinear, quantize_linear_int8
 from .sequential import Sequential
-from .activations import ReLU, Sigmoid, Tanh
+from .activations import ReLU, Sigmoid, Tanh, SiLU, GELU
 from .loss import (
     mse_loss,
     MSELoss,
@@ -57,6 +57,8 @@ __all__ = [
     "ReLU",
     "Sigmoid",
     "Tanh",
+    "SiLU",
+    "GELU",
     "mse_loss",
     "MSELoss",
     "bce_loss",
