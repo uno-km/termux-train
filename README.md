@@ -219,9 +219,18 @@ To neutralize these constraints:
 
 ---
 
-## 44GB Disaggregated Cluster Virtual RAM Pooling
+## 44GB Disaggregated Cluster Virtual RAM Pooling (Powered by AMEVA Cluster)
 
-When training architectures exceeding physical device capacity, Termux-Train binds heterogeneous smartphone clusters into a unified virtual memory pool. Idle mobile devices contribute unallocated RAM via lightweight worker daemons.
+> [!IMPORTANT]
+> **Prerequisite: Official AMEVA Cluster Runtime (`ameva-cluster`) Required**  
+> Multi-device distributed memory pooling and cross-device tensor pipeline execution require the official **`ameva-cluster`** control plane. Single-device training (CPU, Vulkan, OpenCL) runs entirely standalone, but distributed cluster pooling features will raise `ClusterLicenseRequiredError` (E403) unless `ameva-cluster` is installed.  
+> ```bash
+> pip install ameva-cluster termux-train
+> # or via npm:
+> npm install -g @ameva/cluster termux-train
+> ```
+
+When training deep learning models that exceed physical mobile device memory (e.g. 7B+ parameter models, high-resolution diffusion unets, or multimodal projectors), Termux-Train binds heterogeneous smartphone clusters into a unified virtual memory pool. Idle mobile devices contribute unallocated LPDDR RAM via lightweight worker daemons managed by AMEVA Cluster.
 
 ```
 +-------------------------------------------------------------------------+
@@ -230,6 +239,7 @@ When training architectures exceeding physical device capacity, Termux-Train bin
 +-------------------------------------------------------------------------+
            |                           |                           |
   gRPC/HTTP RPC               gRPC/HTTP RPC               gRPC/HTTP RPC
+  (MasterTunnel)              (MasterTunnel)              (MasterTunnel)
            v                           v                           v
 +--------------------+      +--------------------+      +--------------------+
 | WORKER 1 (S21)     |      | WORKER 2 (S20)     |      | WORKER 3 (A53/A35) |
@@ -243,28 +253,56 @@ When training architectures exceeding physical device capacity, Termux-Train bin
                        TOTAL AGGREGATED VIRTUAL POOL: ~44GB
 ```
 
-### Launching Cluster Workers on Fleet Nodes
-On worker nodes (e.g., Galaxy S21, S20, A53):
+### Complete Cluster Step-by-Step Operation Manual
+
+#### Step 1: Network & Environment Setup
+Ensure all participating smartphones are connected to the same local Wi-Fi network, router, or tethered hotspot. Verify TCP port `50052` is accessible between nodes:
 ```bash
+pkg update && pkg install -y python clang netcat-openbsd
+pip install --upgrade ameva-cluster termux-train
+```
+
+#### Step 2: Launching Cluster Workers on Contributor Nodes
+On each memory-contributor smartphone (e.g., Galaxy S21, S20, A53), start the worker daemon. The `--guard-band 300` flag reserves 300MB of unallocated system RAM at all times to prevent the Android Low Memory Killer (LMK) from terminating processes:
+```bash
+# Option A: Directly through ameva-cluster
+ameva-cluster worker --port 50052 --guard-band 300
+
+# Option B: Through termux-train CLI bridge
 termux-train cluster-worker --port 50052 --guard-band 300
 ```
 
-### Probing and Discovering Fleet Nodes
-On coordinator node:
+#### Step 3: Probing and Discovering Fleet Nodes
+On your primary coordinator smartphone (e.g., Galaxy S25), run a cluster probe to inspect node reachability, available LPDDR memory headroom, and network round-trip ping times:
 ```bash
 termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052
 ```
 
-### Initiating Distributed Pipeline Training
+#### Step 4: Initiating Distributed Virtual RAM Pipeline Training
+Train across the aggregated 44GB virtual RAM pool with zero changes to model architecture:
 ```bash
+# Distributed LLM LoRA Training with GPU Slicing
 termux-train train \
   --model tiny-transformer \
   --data ./large_corpus.txt \
   --output ./cluster_adapter.safetensors \
   --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052 \
   --epochs 5 \
+  --vocab-slice 4096 \
+  --chunk-layers 2 \
+  --backend vulkan
+
+# Distributed Image Diffusion LoRA Training
+termux-train diffusion-train \
+  --image-dir ./dataset \
+  --output ./diff_cluster_adapter.safetensors \
+  --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052 \
+  --epochs 5 \
   --backend vulkan
 ```
+
+#### Step 5: MasterTunnel Cryptographic Loopback Security
+When passing sensitive weights and intermediate activations across untrusted Wi-Fi subnets, `termux-train` and `ameva-cluster` automatically spawn an authenticated `MasterTunnel` that wraps all inter-device gRPC/HTTP RPC traffic with an ephemeral SHA-256 cryptographic handshake.
 
 ---
 

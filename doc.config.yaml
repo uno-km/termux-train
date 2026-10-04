@@ -3,8 +3,8 @@ name: "Termux-Train"
 lib_slug: "train"
 package_name_pypi: "termux-train"
 package_name_npm: "termux-train"
-version: "v2.0.0"
-release_name: "Unified Multimodal On-Device Deep Learning & Disaggregated Cluster Virtual RAM Pooling Engine"
+version: "v2.0.1"
+release_name: "Unified Multimodal On-Device Deep Learning & AMEVA Cluster Virtual RAM Pooling Engine"
 license: "Apache-2.0"
 platform: "Android ARM64 / Linux / Termux"
 github_repo_url: "https://github.com/uno-km/termux-train"
@@ -22,8 +22,8 @@ quick_install_cmd: |
 why_challenge_en: "Standard deep learning training systems (PyTorch, DeepSpeed, Megatron) require multi-gigabyte build toolchains unavailable on Android Bionic, lack native mobile GPU autograd dispatch, and rapidly trigger the Android Low Memory Killer (LMK) during backward activation accumulation."
 why_challenge_ko: "기존 딥러닝 학습 시스템(PyTorch, DeepSpeed 등)은 안드로이드 Bionic 환경에서 빌드가 불가능하고 모바일 GPU 역전파 디스패치를 지원하지 않으며, 역전파 활성화 텐서 누적으로 인해 안드로이드 LMK(Low Memory Killer) 강제 종료를 유발했습니다."
 
-description_en: "Termux-Train v2.0.0 delivers a dependency-free C-vectorized DAG Autograd engine, 6-Modality target-aware LoRA/DoRA training (LLM, Image Diffusion, Vision VLM, Whisper STT, TTS, BitNet 1.58-bit), Mali/Adreno GPU Slicing, 300MB Guard-Band memory protection, and 44GB disaggregated cluster virtual RAM pooling across heterogeneous mobile fleets."
-description_ko: "Termux-Train v2.0.0은 무의존성 C-벡터화 DAG 자동미분(Autograd) 엔진, 6대 모달리티 타깃 어댑터 허브(LLM, 이미지 확산, 비전 VLM, Whisper STT, TTS, BitNet 1.58비트), Mali/Adreno GPU 슬라이싱, 300MB 까치밥 메모리 보존, 그리고 이기종 스마트폰 군을 단일 메모리로 묶는 44GB 분산 가상 메모리 풀링 파이프라인 학습을 완벽하게 제공합니다."
+description_en: "Termux-Train v2.0.1 delivers a dependency-free C-vectorized DAG Autograd engine, 6-Modality target-aware LoRA/DoRA training (LLM, Image Diffusion, Vision VLM, Whisper STT, TTS, BitNet 1.58-bit), Mali/Adreno GPU Slicing, 300MB Guard-Band memory protection, and 44GB disaggregated AMEVA Cluster virtual RAM pooling across heterogeneous mobile fleets."
+description_ko: "Termux-Train v2.0.1은 무의존성 C-벡터화 DAG 자동미분(Autograd) 엔진, 6대 모달리티 타깃 어댑터 허브(LLM, 이미지 확산, 비전 VLM, Whisper STT, TTS, BitNet 1.58비트), Mali/Adreno GPU 슬라이싱, 300MB 까치밥 메모리 보존, 그리고 이기종 스마트폰 군을 단일 메모리로 묶는 44GB 분산 AMEVA Cluster 가상 메모리 풀링 파이프라인 학습을 완벽하게 제공합니다."
 
 installation_body: |
   <div class="alert alert-tip">
@@ -379,6 +379,65 @@ benchmarks_body: |
     </tbody>
   </table>
 
+cluster_virtual_ram_body: |
+  <div class="alert alert-important">
+    <span class="alert-title">Prerequisite: Official AMEVA Cluster Package Required</span>
+    <p>Multi-device distributed memory pooling and cross-device tensor pipeline execution are powered by the official <strong><code>ameva-cluster</code></strong> orchestration control plane. Ensure <code>ameva-cluster</code> is installed across all participating mobile nodes:</p>
+    <pre><code>pip install ameva-cluster termux-train
+  # or via npm:
+  npm install -g @ameva/cluster termux-train</code></pre>
+  </div>
+
+  <h3>Disaggregated 44GB Cluster Virtual RAM Pooling Manual</h3>
+  <p>Standard mobile deep learning is heavily constrained by physical LPDDR capacity, causing Android Low Memory Killer (LMK) aborts when training large vision or language models. The AMEVA Cluster virtual memory pooling architecture aggregates physical RAM across heterogeneous smartphones (e.g. Galaxy S25, S21, S20, A53, A35) into an unified, high-speed virtual memory pool up to 44GB.</p>
+
+  <div class="code-tab-group">
+    <div class="code-tabs-header">
+      <button class="code-tab-btn active" type="button">1. Fleet Node Setup</button>
+      <button class="code-tab-btn" type="button">2. Worker Launch</button>
+      <button class="code-tab-btn" type="button">3. Coordinator Probe</button>
+      <button class="code-tab-btn" type="button">4. Training Execution</button>
+    </div>
+    <div class="code-tab-content" style="display:block;">
+      <pre><code># Run on all participant smartphones over local Wi-Fi or tethered subnet
+  pkg update && pkg install -y python clang
+  pip install --upgrade ameva-cluster termux-train</code></pre>
+    </div>
+    <div class="code-tab-content" style="display:none;">
+      <pre><code># Launch memory worker daemon on each contributor node (S21, S20, A53, etc.)
+  ameva-cluster worker --port 50052 --guard-band 300
+  # Alternatively via termux-train CLI bridge:
+  termux-train cluster-worker --port 50052 --guard-band 300</code></pre>
+    </div>
+    <div class="code-tab-content" style="display:none;">
+      <pre><code># Probe fleet topology, memory headroom, and round-trip latency from coordinator (S25)
+  termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052</code></pre>
+    </div>
+    <div class="code-tab-content" style="display:none;">
+      <pre><code># Run multi-device pipeline training bound to aggregated 44GB Virtual RAM pool
+  termux-train train \
+    --model tiny-transformer \
+    --data ./corpus.txt \
+    --output ./cluster_adapter.safetensors \
+    --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052 \
+    --epochs 5 \
+    --vocab-slice 4096 \
+    --chunk-layers 2 \
+    --backend vulkan</code></pre>
+    </div>
+  </div>
+
+  <h3>300MB Guard-Band Memory Protection Architecture</h3>
+  <p>To eliminate system crashes, each worker daemon reads <code>/proc/meminfo</code> via Bionic syscalls before every tensor buffer allocation. If available memory drops below 300MB, the node immediately reports backpressure to the coordinator, avoiding OS memory eviction.</p>
+
+  <h3>Troubleshooting &amp; Resolution (E403_CLUSTER_LICENSE_REQUIRED)</h3>
+  <p>If distributed cluster commands fail with <code>ClusterLicenseRequiredError</code> (E403), verify that:</p>
+  <ul>
+    <li>The <code>ameva-cluster</code> package is installed: <code>python -c "import ameva_cluster"</code>.</li>
+    <li>Cluster worker port <code>50052</code> is reachable across local nodes: <code>nc -zv 192.168.1.101 50052</code>.</li>
+    <li>Appropriate Guard-Band is set (<code>--guard-band 300</code> or <code>500</code> for low-spec nodes).</li>
+  </ul>
+
 code_example_py: |
   import termux_train as tt
 
@@ -721,9 +780,18 @@ readme_content: |
 
   ---
 
-  ## 44GB Disaggregated Cluster Virtual RAM Pooling
+  ## 44GB Disaggregated Cluster Virtual RAM Pooling (Powered by AMEVA Cluster)
 
-  When training architectures exceeding physical device capacity, Termux-Train binds heterogeneous smartphone clusters into a unified virtual memory pool. Idle mobile devices contribute unallocated RAM via lightweight worker daemons.
+  > [!IMPORTANT]
+  > **Prerequisite: Official AMEVA Cluster Runtime (`ameva-cluster`) Required**  
+  > Multi-device distributed memory pooling and cross-device tensor pipeline execution require the official **`ameva-cluster`** control plane. Single-device training (CPU, Vulkan, OpenCL) runs entirely standalone, but distributed cluster pooling features will raise `ClusterLicenseRequiredError` (E403) unless `ameva-cluster` is installed.  
+  > ```bash
+  > pip install ameva-cluster termux-train
+  > # or via npm:
+  > npm install -g @ameva/cluster termux-train
+  > ```
+
+  When training deep learning models that exceed physical mobile device memory (e.g. 7B+ parameter models, high-resolution diffusion unets, or multimodal projectors), Termux-Train binds heterogeneous smartphone clusters into a unified virtual memory pool. Idle mobile devices contribute unallocated LPDDR RAM via lightweight worker daemons managed by AMEVA Cluster.
 
   ```
   +-------------------------------------------------------------------------+
@@ -732,6 +800,7 @@ readme_content: |
   +-------------------------------------------------------------------------+
              |                           |                           |
     gRPC/HTTP RPC               gRPC/HTTP RPC               gRPC/HTTP RPC
+    (MasterTunnel)              (MasterTunnel)              (MasterTunnel)
              v                           v                           v
   +--------------------+      +--------------------+      +--------------------+
   | WORKER 1 (S21)     |      | WORKER 2 (S20)     |      | WORKER 3 (A53/A35) |
@@ -745,28 +814,56 @@ readme_content: |
                          TOTAL AGGREGATED VIRTUAL POOL: ~44GB
   ```
 
-  ### Launching Cluster Workers on Fleet Nodes
-  On worker nodes (e.g., Galaxy S21, S20, A53):
+  ### Complete Cluster Step-by-Step Operation Manual
+
+  #### Step 1: Network & Environment Setup
+  Ensure all participating smartphones are connected to the same local Wi-Fi network, router, or tethered hotspot. Verify TCP port `50052` is accessible between nodes:
   ```bash
+  pkg update && pkg install -y python clang netcat-openbsd
+  pip install --upgrade ameva-cluster termux-train
+  ```
+
+  #### Step 2: Launching Cluster Workers on Contributor Nodes
+  On each memory-contributor smartphone (e.g., Galaxy S21, S20, A53), start the worker daemon. The `--guard-band 300` flag reserves 300MB of unallocated system RAM at all times to prevent the Android Low Memory Killer (LMK) from terminating processes:
+  ```bash
+  # Option A: Directly through ameva-cluster
+  ameva-cluster worker --port 50052 --guard-band 300
+
+  # Option B: Through termux-train CLI bridge
   termux-train cluster-worker --port 50052 --guard-band 300
   ```
 
-  ### Probing and Discovering Fleet Nodes
-  On coordinator node:
+  #### Step 3: Probing and Discovering Fleet Nodes
+  On your primary coordinator smartphone (e.g., Galaxy S25), run a cluster probe to inspect node reachability, available LPDDR memory headroom, and network round-trip ping times:
   ```bash
   termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052
   ```
 
-  ### Initiating Distributed Pipeline Training
+  #### Step 4: Initiating Distributed Virtual RAM Pipeline Training
+  Train across the aggregated 44GB virtual RAM pool with zero changes to model architecture:
   ```bash
+  # Distributed LLM LoRA Training with GPU Slicing
   termux-train train \
     --model tiny-transformer \
     --data ./large_corpus.txt \
     --output ./cluster_adapter.safetensors \
     --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052,192.168.1.103:50052 \
     --epochs 5 \
+    --vocab-slice 4096 \
+    --chunk-layers 2 \
+    --backend vulkan
+
+  # Distributed Image Diffusion LoRA Training
+  termux-train diffusion-train \
+    --image-dir ./dataset \
+    --output ./diff_cluster_adapter.safetensors \
+    --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052 \
+    --epochs 5 \
     --backend vulkan
   ```
+
+  #### Step 5: MasterTunnel Cryptographic Loopback Security
+  When passing sensitive weights and intermediate activations across untrusted Wi-Fi subnets, `termux-train` and `ameva-cluster` automatically spawn an authenticated `MasterTunnel` that wraps all inter-device gRPC/HTTP RPC traffic with an ephemeral SHA-256 cryptographic handshake.
 
   ---
 
@@ -853,6 +950,9 @@ readme_pypi_content: |
 
   ```bash
   pip install termux-train
+
+  # For multi-device distributed 44GB Virtual RAM Pooling (Required):
+  pip install ameva-cluster
   ```
 
   ## Python Quickstart
@@ -881,6 +981,21 @@ readme_pypi_content: |
   )
   ```
 
+  ## AMEVA Cluster Multi-Device Virtual RAM Manual
+  To train models exceeding single-device physical memory across multiple Android smartphones:
+  ```bash
+  # Step 1: Run worker on contributor phones (e.g. S21, S20, A53)
+  ameva-cluster worker --port 50052 --guard-band 300
+
+  # Step 2: Probe fleet from coordinator phone (e.g. S25)
+  termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052
+
+  # Step 3: Run distributed pipeline training on aggregated 44GB virtual RAM pool
+  termux-train train --model tiny-transformer --data ./corpus.txt \
+    --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052 \
+    --vocab-slice 4096 --chunk-layers 2 --backend vulkan
+  ```
+
   ## CLI Usage
 
   ```bash
@@ -898,9 +1013,6 @@ readme_pypi_content: |
 
   # LLM LoRA with GPU Slicing
   termux-train train --model tiny-transformer --data ./corpus.txt --vocab-slice 4096 --chunk-layers 2
-
-  # Cluster Worker
-  termux-train cluster-worker --port 50052 --guard-band 300
   ```
 
   ## Documentation & Repository
@@ -925,6 +1037,9 @@ readme_npm_content: |
   npm install termux-train
   # or global CLI installation:
   npm install -g termux-train
+
+  # For multi-device distributed 44GB Virtual RAM Pooling (Required):
+  npm install -g @ameva/cluster
   ```
 
   ## Node.js Quickstart
@@ -942,7 +1057,7 @@ readme_npm_content: |
     backend: 'vulkan'
   });
 
-  // 2. High-Performance LLM LoRA Training
+  // 2. High-Performance LLM LoRA Training with GPU Slicing
   const trainer = new TermuxTrainer({
     modelType: 'lora',
     loraRank: 8,
@@ -951,6 +1066,20 @@ readme_npm_content: |
     chunkLayers: 2
   });
   await trainer.fit({ epochs: 3, lr: 0.0002 });
+  ```
+
+  ## AMEVA Cluster Multi-Device Virtual RAM Manual
+  ```bash
+  # Step 1: Start memory worker daemon on contributor nodes
+  ameva-cluster worker --port 50052 --guard-band 300
+
+  # Step 2: Probe fleet memory topology from coordinator
+  termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052
+
+  # Step 3: Run pipeline training bound to aggregated Virtual RAM pool
+  termux-train train --model tiny-transformer --data ./corpus.txt \
+    --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052 \
+    --vocab-slice 4096 --chunk-layers 2 --backend vulkan
   ```
 
   ## Global CLI Commands
@@ -971,6 +1100,16 @@ readme_npm_content: |
   Apache-2.0 License. Copyright (c) 2026 Eunho Kim (@uno-km).
 
 changelog:
+  - version: "v2.0.1"
+    date: "2026-10-04"
+    title: "Official AMEVA Cluster Virtual RAM Integration & Standalone Manual"
+    type: "Production Stable Release"
+    changes:
+      - "Enforced explicit AMEVA Cluster (pip install ameva-cluster) control plane requirement for multi-device distributed memory pooling."
+      - "Published complete step-by-step AMEVA Cluster deployment and 44GB virtual RAM execution manual."
+      - "Integrated MasterTunnel cryptographic loopback security for inter-device tensor pipelines."
+      - "Added cluster-virtual-ram documentation portal page with full Zero-Drift compliance."
+      - "Bumped production package version to 2.0.1 across PyPI and npm registries."
   - version: "v2.0.0"
     date: "2026-10-03"
     title: "Major Multimodal Engine & 44GB Disaggregated Cluster Virtual RAM Release"

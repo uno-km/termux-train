@@ -11,9 +11,78 @@ from typing import List, Optional, Union, Dict, Any, Tuple
 from termux_train.exceptions import (
     ClusterConnectionError,
     ClusterConfigurationError,
+    ClusterLicenseRequiredError,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def check_cluster_license(license_key: Optional[str] = None) -> None:
+    """Enforces exclusive AMEVA-Cluster runtime license requirement.
+    Fail-Fast: Raises ClusterLicenseRequiredError if ameva_cluster is not installed
+    or license verification fails.
+    """
+    try:
+        from ameva_cluster.guard import verify_cluster_license
+    except ImportError:
+        raise ClusterLicenseRequiredError()
+
+    if not verify_cluster_license(license_key):
+        raise ClusterLicenseRequiredError(
+            "\n================================================================================\n"
+            "[AMEVA-CLUSTER] CLUSTER LICENSE INVALID (E403)\n"
+            "================================================================================\n"
+            "The provided AMEVA Cluster license token is invalid or expired.\n"
+            "Please check your AMEVA_CLUSTER_LICENSE environment variable.\n"
+            "================================================================================"
+        )
+
+
+def setup_cluster_guard_tunnels(
+    servers: List[str],
+    secret_key: Optional[str] = None
+) -> Tuple[List[str], List[Any]]:
+    """Establishes authenticated loopback MasterTunnels for remote RPC nodes.
+
+    Transforms remote endpoints into local authenticated tunnel endpoints (127.0.0.1:PORT)
+    which transparently inject the AMEVA Guard cryptographic handshake.
+
+    Returns:
+        Tuple of (tunnel_server_endpoints, active_tunnel_instances)
+    """
+    if not servers:
+        return [], []
+
+    try:
+        from ameva_cluster.guard import MasterTunnel
+    except ImportError:
+        raise ClusterLicenseRequiredError()
+
+    tunnel_endpoints: List[str] = []
+    active_tunnels: List[Any] = []
+
+    for endpoint in servers:
+        host, port_str = endpoint.split(":")
+        port = int(port_str)
+
+        # Local loopback addresses do not require an extra proxy hop
+        if host in ("127.0.0.1", "localhost", "::1"):
+            tunnel_endpoints.append(endpoint)
+            continue
+
+        tunnel = MasterTunnel(remote_host=host, remote_port=port, secret_key=secret_key)
+        tunnel.start()
+        active_tunnels.append(tunnel)
+        local_ep = f"127.0.0.1:{tunnel.local_port}"
+        tunnel_endpoints.append(local_ep)
+        logger.info(
+            "[AMEVA-TRAIN-CLUSTER] Authenticated MasterTunnel active: %s -> %s",
+            local_ep,
+            endpoint,
+        )
+
+    return tunnel_endpoints, active_tunnels
+
 
 
 def parse_cluster_rpc_spec(rpc_input: Optional[Union[str, List[str]]]) -> List[str]:

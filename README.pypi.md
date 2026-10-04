@@ -10,6 +10,9 @@
 
 ```bash
 pip install termux-train
+
+# For multi-device distributed 44GB Virtual RAM Pooling (Required):
+pip install ameva-cluster
 ```
 
 ## Python Quickstart
@@ -38,6 +41,21 @@ tt.vision.train_vision_vlm_lora(
 )
 ```
 
+## AMEVA Cluster Multi-Device Virtual RAM Manual
+To train models exceeding single-device physical memory across multiple Android smartphones:
+```bash
+# Step 1: Run worker on contributor phones (e.g. S21, S20, A53)
+ameva-cluster worker --port 50052 --guard-band 300
+
+# Step 2: Probe fleet from coordinator phone (e.g. S25)
+termux-train cluster-probe --fleet 192.168.1.101:50052,192.168.1.102:50052
+
+# Step 3: Run distributed pipeline training on aggregated 44GB virtual RAM pool
+termux-train train --model tiny-transformer --data ./corpus.txt \
+  --virtual-ram-pool 192.168.1.101:50052,192.168.1.102:50052 \
+  --vocab-slice 4096 --chunk-layers 2 --backend vulkan
+```
+
 ## CLI Usage
 
 ```bash
@@ -55,9 +73,6 @@ termux-train tts-train --data ./speech.jsonl --output ./tts_adapter.safetensors 
 
 # LLM LoRA with GPU Slicing
 termux-train train --model tiny-transformer --data ./corpus.txt --vocab-slice 4096 --chunk-layers 2
-
-# Cluster Worker
-termux-train cluster-worker --port 50052 --guard-band 300
 ```
 
 ## Documentation & Repository
